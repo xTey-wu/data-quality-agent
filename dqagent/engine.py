@@ -19,15 +19,18 @@ PLAN_OPTIONS = {
     "categorical_imputation": ["unknown", "most_frequent"],
     "outlier_policy": ["keep", "invalid_to_missing", "iqr_clip"],
     "class_weight": ["none", "balanced"],
+    "threshold_policy": ["fixed", "validation_macro_f1"],
 }
+OPTIONAL_PLAN_DEFAULTS = {"add_missing_indicators": False, "threshold_policy": "fixed"}
 PLAN_SCHEMA = {
     "type": "object", "properties": {
         "name": {"type": "string", "maxLength": 120},
         **{key: {"type": "string", "enum": values} for key, values in PLAN_OPTIONS.items()},
         "deduplicate": {"type": "boolean"},
+        "add_missing_indicators": {"type": "boolean", "default": False},
         "reason": {"type": "string", "maxLength": 1200},
     },
-    "required": ["name", *PLAN_OPTIONS, "deduplicate", "reason"],
+    "required": ["name", *[key for key in PLAN_OPTIONS if key not in OPTIONAL_PLAN_DEFAULTS], "deduplicate", "reason"],
     "additionalProperties": False,
 }
 TOOLS = [{"type": "function", "function": {
@@ -47,6 +50,10 @@ SYSTEM_PROMPT = """你是数据质量处理智能体。根据训练数据的统�
 先尝试简单合理的方案；解析失败时根据简短错误调整解析方式。异常值有业务语义，不能一律裁剪。
 优先满足硬约束，再比较固定验证集 macro_f1。验证变差或硬约束失败时保留之前方案，不通过删除困难验证样本提升指标。
 每个计划给出简短、可核查的选择依据。达到预算时停止并概述结果。你不需要也不应输出内部思维过程。"""
+SYSTEM_PROMPT += """
+add_missing_indicators可保留原始缺失位置供分类使用；省略时为false。
+threshold_policy可选fixed（0.5）或validation_macro_f1（只在验证集选择阈值，定稿后锁定）。
+优先比较至少两个合法候选，单独比较balanced权重，不与激进裁剪捆绑；不重复相同参数组合。"""
 
 
 def _json_safe(value: Any) -> Any:
@@ -103,13 +110,17 @@ def _validate_arguments(arguments: str) -> dict[str, Any]:
     if not isinstance(data, dict) or set(data) != {"plan"}:
         raise ValueError("工具仅接受 plan 参数。")
     plan = data["plan"]
-    if not isinstance(plan, dict) or set(plan) != set(PLAN_SCHEMA["properties"]):
+    if (not isinstance(plan, dict) or not set(PLAN_SCHEMA["required"]).issubset(plan)
+            or set(plan) - set(PLAN_SCHEMA["properties"])):
         raise ValueError("方案字段不完整或包含额外字段。")
+    plan = {**OPTIONAL_PLAN_DEFAULTS, **plan}
     for key, values in PLAN_OPTIONS.items():
         if not isinstance(plan[key], str) or plan[key] not in values:
             raise ValueError("方案包含未允许的枚举值。")
     if type(plan["deduplicate"]) is not bool:
         raise ValueError("deduplicate 必须为布尔值。")
+    if type(plan["add_missing_indicators"]) is not bool:
+        raise ValueError("add_missing_indicators 必须为布尔值。")
     if not isinstance(plan["name"], str) or not 1 <= len(plan["name"].strip()) <= 120:
         raise ValueError("方案名称不能为空或过长。")
     if not isinstance(plan["reason"], str) or not 1 <= len(plan["reason"].strip()) <= 1200:
@@ -124,6 +135,17 @@ def _safe_score(result: dict) -> float | None:
     if isinstance(score, bool) or not isinstance(score, (float, int)):
         return None
     return float(score) if math.isfinite(score) and 0 <= score <= 1 else None
+
+
+def _decision_threshold(result: dict, plan: dict) -> float | None:
+    threshold = result.get("decision_threshold")
+    if threshold is None:
+        threshold = (result.get("validation") or {}).get("decision_threshold")
+    if threshold is None and plan.get("threshold_policy", "fixed") == "fixed":
+        threshold = 0.5
+    if type(threshold) not in (float, int) or not math.isfinite(threshold) or not 0 <= threshold <= 1:
+        return None
+    return float(threshold)
 
 
 def _usage_summary(records: list[dict], info: dict, retries: int) -> dict:
@@ -268,18 +290,24 @@ def run_agent(train_df, val_df, output_dir, provider=None, seed=42, max_candidat
                             result = {"ok": False, "plan": plan, "error": {
                                 "code": "evaluation_failure", "message": "候选方案执行失败。", "type": type(error).__name__,
                             }}
+                        threshold = _decision_threshold(result, plan)
+                        if result.get("ok") and threshold is None:
+                            result = {**result, "ok": False, "error": "验证阈值缺失或无效，不能保留需要锁定阈值的方案。",
+                                      "guardrails": {"passed": False, "reasons": ["Missing or invalid validation decision threshold."]}}
                         score = _safe_score(result)
                         selected = score is not None and (best_score is None or score > best_score)
                         entry = {
                             "index": len(candidates) + 1, "plan": plan, "ok": bool(result.get("ok")),
                             "guardrails": result.get("guardrails", {"passed": False, "reasons": ["缺少硬约束结果。"]}),
                             "validation": result.get("validation"), "error": result.get("error"),
+                            "decision_threshold": threshold, "threshold_selection": result.get("threshold_selection"),
                             "decision": "selected" if selected else "rejected" if score is None else "not_selected",
                         }
                         candidates.append(entry)
                         if selected:
                             best, best_score = copy.deepcopy(result), score
                             best["plan"] = plan
+                            best["decision_threshold"] = threshold
                             record("candidate_selected", candidate=entry)
                         else:
                             record("candidate_rejected" if score is None else "candidate_not_selected", candidate=entry)
@@ -323,6 +351,8 @@ def run_agent(train_df, val_df, output_dir, provider=None, seed=42, max_candidat
                         "invalid_tool_calls": invalid_tool_calls},
             "candidates": candidates, "selected_plan": best["plan"] if best else None,
             "best_validation": best.get("validation") if best else None,
+            "best_decision_threshold": best.get("decision_threshold") if best else None,
+            "best_threshold_selection": best.get("threshold_selection") if best else None,
             "best_quality_after": best.get("quality_after") if best else None,
             "usage": _usage_summary(usage_records, info, retries), "provider_error": provider_error,
             "result_note": "真实大模型运行。" if info.get("is_real_model") else "离线规则模拟，用于验证流程；真实大模型效果尚未测试。",

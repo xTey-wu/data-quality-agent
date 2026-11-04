@@ -1,0 +1,9 @@
+{
+  "minimal": 0.5,
+  "fixed": 0.5,
+  "previous": 0.5,
+  "indicators_only": 0.5,
+  "threshold_only": 0.2,
+  "preset_search": 0.2,
+  "agent": 0.2
+}

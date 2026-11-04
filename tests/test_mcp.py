@@ -58,6 +58,18 @@ def test_schema_rejects_arbitrary_actions_and_nonboolean_values():
         CleaningPlan.model_validate({**DEFAULT_PLAN, "name": " "})
 
 
+def test_extended_plan_fields_are_optional_and_strict():
+    legacy = {key: value for key, value in DEFAULT_PLAN.items()
+              if key not in {"add_missing_indicators", "threshold_policy"}}
+    parsed = CleaningPlan.model_validate(legacy)
+    assert parsed.add_missing_indicators is False
+    assert parsed.threshold_policy == "fixed"
+    required = CleaningPlan.model_json_schema()["required"]
+    assert "add_missing_indicators" not in required and "threshold_policy" not in required
+    with pytest.raises(ValidationError):
+        CleaningPlan.model_validate({**legacy, "add_missing_indicators": 1})
+
+
 def test_inspection_and_candidates_never_open_held_out_or_answer_files(prepared):
     data, runs = prepared
     service = CleaningService(data, runs)
@@ -92,6 +104,25 @@ def test_budget_and_state_survive_restart(prepared):
     restarted = CleaningService(data, runs)
     assert restarted.get_run_status(run_id)["candidate_attempts"] == 4
     assert restarted.evaluate_cleaning_plan(run_id, DEFAULT_PLAN)["error"]["code"] == "candidate_budget"
+
+
+def test_rule_search_compares_multiple_real_legal_plans_without_an_api(prepared):
+    from dqagent.data import load_table
+    from dqagent.engine import run_agent
+    from dqagent.providers import MockProvider
+    data, runs = prepared
+    result = run_agent(load_table(data / "train_dirty.csv"), load_table(data / "validation.csv"), runs / "rule_search")
+    assert result["mode"] == "rule_simulation" and result["model_calls"] == 0
+    assert len(result["candidates"]) == 4
+    assert all(candidate["ok"] for candidate in result["candidates"])
+    plans = [candidate["plan"] for candidate in result["candidates"]]
+    assert all(plan["numeric_parser"] == "semantic" for plan in plans)
+    assert {plan["class_weight"] for plan in plans} == {"none", "balanced"}
+    assert {plan["categorical_imputation"] for plan in plans} == {"unknown", "most_frequent"}
+    assert {plan["numeric_imputation"] for plan in plans} == {"median", "mean"}
+    assert len({MockProvider._signature(plan) for plan in plans}) == 4
+    assert result["best_validation"]["macro_f1"] == max(candidate["validation"]["macro_f1"] for candidate in result["candidates"])
+    assert result["best_decision_threshold"] == result["best_validation"]["decision_threshold"]
 
 
 @pytest.mark.parametrize("run_id", ["../secret", "/tmp/secret", "run_" + "f" * 23, "run_" + "F" * 24])
@@ -144,6 +175,57 @@ def test_failed_finalization_remains_frozen(prepared):
     assert restarted.evaluate_cleaning_plan(run_id, DEFAULT_PLAN)["error"]["code"] == "run_frozen"
 
 
+def test_tuned_threshold_is_persisted_and_frozen_before_test_after_restart(prepared):
+    data, runs = prepared
+    service = CleaningService(data, runs)
+    run_id = service.start_cleaning_run()["run_id"]
+    tuned = {**DEFAULT_PLAN, "add_missing_indicators": True, "threshold_policy": "validation_macro_f1"}
+    candidate = service.evaluate_cleaning_plan(run_id, tuned)
+    assert candidate["candidate"]["decision"] == "selected"
+    threshold = candidate["candidate"]["decision_threshold"]
+    assert candidate["best_decision_threshold"] == threshold
+    restarted = CleaningService(data, runs)
+    assert restarted.get_run_status(run_id)["best_decision_threshold"] == threshold
+    from dqagent.service import load_table
+    def checked_load(path):
+        if Path(path).name == "test.csv":
+            state = json.loads((runs / run_id / "state.json").read_text())
+            assert state["status"] == "finalizing"
+            assert state["frozen_decision_threshold"] == threshold
+        return load_table(path)
+    with patch("dqagent.service.load_table", side_effect=checked_load), patch(
+        "dqagent.service.modeling.finalize_plan", wraps=modeling.finalize_plan
+    ) as finalizer:
+        final = restarted.finalize_cleaning_run(run_id)
+    assert final["status"] == "finalized"
+    assert finalizer.call_args.kwargs["decision_threshold"] == threshold
+    exported = json.loads((runs / run_id / "artifacts" / "preprocessing.json").read_text())
+    assert exported["decision_threshold"] == threshold
+    assert final["final_metrics"]["test"]["decision_threshold"] == threshold
+
+
+def test_legacy_fixed_state_can_finalize_but_missing_tuned_threshold_cannot(prepared):
+    data, runs = prepared
+    service = CleaningService(data, runs)
+    for policy in ("fixed", "validation_macro_f1"):
+        run_id = service.start_cleaning_run()["run_id"]
+        service.evaluate_cleaning_plan(run_id, {**DEFAULT_PLAN, "threshold_policy": policy})
+        path = runs / run_id / "state.json"
+        state = json.loads(path.read_text())
+        state.pop("best_decision_threshold")
+        if policy == "fixed":
+            state["best_plan"].pop("threshold_policy")
+            state["best_plan"].pop("add_missing_indicators")
+        path.write_text(json.dumps(state))
+        result = CleaningService(data, runs).finalize_cleaning_run(run_id)
+        if policy == "fixed":
+            assert result["status"] == "finalized"
+            assert result["frozen_decision_threshold"] == 0.5
+        else:
+            assert result["error"]["code"] == "missing_locked_threshold"
+            assert not (runs / run_id / "finalization.claim").exists()
+
+
 def test_concurrent_finalize_only_executes_local_test_once(prepared):
     data, runs = prepared
     service = CleaningService(data, runs)
@@ -174,6 +256,10 @@ def test_stdio_protocol_initialize_tools_prompt_and_actual_workflow(prepared):
                 plan_tool = next(tool for tool in listed.tools if tool.name == "evaluate_cleaning_plan")
                 schema = json.dumps(plan_tool.input_schema)
                 assert "numeric_parser" in schema and "additionalProperties" in schema
+                typed_plan = next(value for value in plan_tool.input_schema["$defs"].values()
+                                  if "numeric_parser" in value.get("properties", {}))
+                assert "add_missing_indicators" not in typed_plan["required"]
+                assert "threshold_policy" not in typed_plan["required"]
                 prompt = await client.get_prompt("cleaning_workflow")
                 assert "finalize_cleaning_run" in prompt.messages[0].content.text
                 async def call(name, arguments=None):
@@ -183,12 +269,24 @@ def test_stdio_protocol_initialize_tools_prompt_and_actual_workflow(prepared):
                     return response.structured_content
                 inspection = await call("inspect_training_data")
                 assert inspection["training_profile"]["feature_count"] == 15
+                old_run = await call("start_cleaning_run")
+                old_plan = {key: value for key, value in DEFAULT_PLAN.items()
+                            if key not in {"add_missing_indicators", "threshold_policy"}}
+                old_candidate = await call("evaluate_cleaning_plan", {"run_id": old_run["run_id"], "plan": old_plan})
+                assert old_candidate["candidate"]["plan"]["threshold_policy"] == "fixed"
+                assert old_candidate["candidate"]["plan"]["add_missing_indicators"] is False
                 started = await call("start_cleaning_run")
                 run_id = started["run_id"]
-                candidate = await call("evaluate_cleaning_plan", {"run_id": run_id, "plan": DEFAULT_PLAN})
+                tuned = {**DEFAULT_PLAN, "add_missing_indicators": True, "threshold_policy": "validation_macro_f1"}
+                candidate = await call("evaluate_cleaning_plan", {"run_id": run_id, "plan": tuned})
                 assert candidate["candidate"]["decision"] == "selected"
+                threshold = candidate["candidate"]["decision_threshold"]
                 final = await call("finalize_cleaning_run", {"run_id": run_id})
                 assert final["status"] == "finalized"
+                assert final["frozen_decision_threshold"] == threshold
+                exported = json.loads((runs / run_id / "artifacts" / "preprocessing.json").read_text())
+                assert exported["decision_threshold"] == threshold
+                assert CleaningService(data, runs).get_run_status(run_id)["frozen_decision_threshold"] == threshold
                 status = await call("get_run_status", {"run_id": run_id})
                 assert status["internal_model_calls"] == 0
                 assert status["candidate_attempts"] == 1

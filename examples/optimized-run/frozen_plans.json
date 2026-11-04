@@ -1,0 +1,86 @@
+{
+  "minimal": {
+    "name": "minimal",
+    "numeric_parser": "semantic",
+    "numeric_imputation": "mean",
+    "categorical_imputation": "most_frequent",
+    "outlier_policy": "invalid_to_missing",
+    "deduplicate": false,
+    "class_weight": "none",
+    "reason": "Basic format/schema repair with mean/mode filling, without deduplication or class weighting.",
+    "add_missing_indicators": false,
+    "threshold_policy": "fixed"
+  },
+  "fixed": {
+    "name": "fixed",
+    "numeric_parser": "semantic",
+    "numeric_imputation": "median",
+    "categorical_imputation": "unknown",
+    "outlier_policy": "invalid_to_missing",
+    "deduplicate": true,
+    "class_weight": "balanced",
+    "reason": "Fixed semantic parsing, schema repair, median filling, deduplication and balanced weights.",
+    "add_missing_indicators": false,
+    "threshold_policy": "fixed"
+  },
+  "previous": {
+    "name": "previous",
+    "numeric_parser": "semantic",
+    "numeric_imputation": "median",
+    "categorical_imputation": "unknown",
+    "outlier_policy": "invalid_to_missing",
+    "deduplicate": true,
+    "class_weight": "none",
+    "reason": "Frozen previous strategy for a same-split regression comparison.",
+    "add_missing_indicators": false,
+    "threshold_policy": "fixed"
+  },
+  "indicators_only": {
+    "name": "indicators_only",
+    "numeric_parser": "semantic",
+    "numeric_imputation": "median",
+    "categorical_imputation": "unknown",
+    "outlier_policy": "invalid_to_missing",
+    "deduplicate": true,
+    "class_weight": "none",
+    "reason": "Change missing indicators alone; keep the 0.5 threshold and original imputation.",
+    "add_missing_indicators": true,
+    "threshold_policy": "fixed"
+  },
+  "threshold_only": {
+    "name": "threshold_only",
+    "numeric_parser": "semantic",
+    "numeric_imputation": "median",
+    "categorical_imputation": "unknown",
+    "outlier_policy": "invalid_to_missing",
+    "deduplicate": true,
+    "class_weight": "none",
+    "reason": "Change validation threshold selection alone; keep the original prediction features.",
+    "add_missing_indicators": false,
+    "threshold_policy": "validation_macro_f1"
+  },
+  "preset_search": {
+    "add_missing_indicators": true,
+    "threshold_policy": "validation_macro_f1",
+    "name": "grid_unknown_none",
+    "numeric_parser": "semantic",
+    "numeric_imputation": "median",
+    "categorical_imputation": "unknown",
+    "outlier_policy": "invalid_to_missing",
+    "deduplicate": true,
+    "class_weight": "none",
+    "reason": "Evaluate a predeclared categorical-imputation/class-weight combination."
+  },
+  "agent": {
+    "add_missing_indicators": true,
+    "threshold_policy": "validation_macro_f1",
+    "name": "rule_candidate_1",
+    "numeric_parser": "semantic",
+    "numeric_imputation": "median",
+    "categorical_imputation": "unknown",
+    "outlier_policy": "invalid_to_missing",
+    "deduplicate": true,
+    "class_weight": "none",
+    "reason": "离线规则模拟：根据训练画像选择解析、缺失与去重策略。"
+  }
+}

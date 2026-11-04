@@ -1,0 +1,12 @@
+{
+  "add_missing_indicators": true,
+  "threshold_policy": "validation_macro_f1",
+  "name": "rule_candidate_1",
+  "numeric_parser": "semantic",
+  "numeric_imputation": "median",
+  "categorical_imputation": "unknown",
+  "outlier_policy": "invalid_to_missing",
+  "deduplicate": true,
+  "class_weight": "none",
+  "reason": "离线规则模拟：根据训练画像选择解析、缺失与去重策略。"
+}

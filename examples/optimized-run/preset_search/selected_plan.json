@@ -1,0 +1,12 @@
+{
+  "add_missing_indicators": true,
+  "threshold_policy": "validation_macro_f1",
+  "name": "grid_unknown_none",
+  "numeric_parser": "semantic",
+  "numeric_imputation": "median",
+  "categorical_imputation": "unknown",
+  "outlier_policy": "invalid_to_missing",
+  "deduplicate": true,
+  "class_weight": "none",
+  "reason": "Evaluate a predeclared categorical-imputation/class-weight combination."
+}

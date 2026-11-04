@@ -42,39 +42,135 @@ def _finite_nonnegative(value: Any) -> bool:
 
 
 class MockProvider:
-    """Deterministic rule simulation for exercising the orchestration offline."""
+    """Deterministic rule search driven by the visible profile and tool feedback."""
 
     def __init__(self):
-        self._step = 0
+        self._issued: list[dict[str, Any]] = []
 
     def describe(self) -> dict[str, Any]:
         return {
-            "provider": "mock", "model": "rule-simulation-v1", "mode": "rule_simulation",
+            "provider": "mock", "model": "rule-simulation-v2", "mode": "rule_simulation",
             "is_real_model": False, "parameters": {"deterministic": True},
             "pricing": {"input_per_million": None, "output_per_million": None, "currency": None},
         }
 
+    @staticmethod
+    def _signature(plan: dict) -> str:
+        actions = {key: value for key, value in plan.items() if key not in {"name", "reason"}}
+        actions.setdefault("add_missing_indicators", False)
+        actions.setdefault("threshold_policy", "fixed")
+        return json.dumps(actions, sort_keys=True, ensure_ascii=False)
+
     def complete(self, messages: list[dict], tools: list[dict]) -> ProviderResponse:
         del tools
-        self._step += 1
-        if self._step > 3:
-            return ProviderResponse({"role": "assistant", "content": "离线规则模拟结束；保留通过检查的最佳方案。"})
-        errors = [m for m in messages if m.get("role") == "tool" and '"ok": false' in str(m.get("content"))]
-        plan = {
-            "name": ["strict_baseline", "semantic_repair", "balanced_iqr_candidate"][self._step - 1],
-            "numeric_parser": "strict" if self._step == 1 else "semantic",
-            "numeric_imputation": "median", "categorical_imputation": "unknown",
-            "outlier_policy": "iqr_clip" if self._step == 3 else "invalid_to_missing",
-            "deduplicate": True, "class_weight": "balanced" if self._step == 3 else "none",
-            "reason": (
-                "离线规则模拟：先尝试严格解析以检查格式问题。" if self._step == 1 else
-                "离线规则模拟：根据工具失败反馈改用语义解析。" if self._step == 2 and errors else
-                "离线规则模拟：比较受控候选，由验证指标与硬约束决定是否保留。"
-            ),
+        profile, budget, call_plans, feedback = None, 4, {}, []
+        for message in messages:
+            if message.get("role") == "user":
+                try:
+                    payload = json.loads(message.get("content", ""))
+                    if isinstance(payload.get("training_profile"), dict):
+                        profile = payload["training_profile"]
+                    requested = payload.get("max_candidates", 4)
+                    if type(requested) is int:
+                        budget = max(1, min(requested, 4))
+                except (ValueError, TypeError, AttributeError):
+                    pass
+            elif message.get("role") == "assistant":
+                for call in message.get("tool_calls") or []:
+                    try:
+                        if call["function"]["name"] == "evaluate_plan":
+                            previous = json.loads(call["function"]["arguments"])["plan"]
+                            call_plans[call["id"]] = previous
+                    except (KeyError, ValueError, TypeError):
+                        pass
+            elif message.get("role") == "tool":
+                try:
+                    result = json.loads(message.get("content", ""))
+                    previous = result.get("plan") or call_plans.get(message.get("tool_call_id"))
+                    if isinstance(previous, dict):
+                        feedback.append((previous, result))
+                except (ValueError, TypeError, AttributeError):
+                    pass
+        seen = {self._signature(plan) for plan in self._issued}
+        for previous in call_plans.values():
+            if self._signature(previous) not in seen:
+                self._issued.append(copy.deepcopy(previous))
+                seen.add(self._signature(previous))
+        if len(self._issued) >= budget:
+            return ProviderResponse({"role": "assistant", "content": "离线规则模拟预算已用完；保留通过检查的最佳方案。"})
+
+        fields = (profile or {}).get("fields", {})
+        parse_errors = (profile or {}).get("numeric_parse_errors", 0) or sum(
+            field.get("strict_parse_errors", 0) for field in fields.values())
+        invalid_values = (profile or {}).get("numeric_range_violations", 0)
+        missing_categories = [field for field in fields.values()
+                              if field.get("kind") == "categorical" and field.get("missing", 0)]
+        rows = (profile or {}).get("rows") or 1
+        mode_is_dominant = bool(missing_categories) and all(
+            not field.get("unknown_semantic_count", 0)
+            and max(field.get("top_values", {}).values(), default=0) >= 0.8 * max(1, rows - field.get("missing", 0))
+            for field in missing_categories)
+        base = {
+            "numeric_parser": "semantic" if parse_errors else "strict",
+            "numeric_imputation": "median",
+            "categorical_imputation": "most_frequent" if mode_is_dominant else "unknown",
+            "outlier_policy": "invalid_to_missing" if profile is None or invalid_values else "keep",
+            "deduplicate": profile is None or bool(profile.get("duplicate_rows", 0)),
+            "class_weight": "none", "add_missing_indicators": True,
+            "threshold_policy": "validation_macro_f1",
         }
+        valid_feedback = [(plan, result) for plan, result in feedback
+                          if result.get("ok") and result.get("guardrails", {}).get("passed")
+                          and isinstance((result.get("validation") or {}).get("macro_f1"), (int, float))]
+        retained = next((result.get("retained_plan") for _, result in reversed(feedback) if result.get("retained_plan")), None)
+        anchors = [(plan, result) for plan, result in valid_feedback if plan.get("name") == retained]
+        anchor = copy.deepcopy((anchors[-1] if anchors else max(
+            valid_feedback, key=lambda pair: pair[1]["validation"]["macro_f1"], default=(base, {})))[0])
+        anchor.pop("name", None)
+        anchor.pop("reason", None)
+        options = []
+        for previous, result in reversed(feedback):
+            error = str(result.get("error", "")).lower()
+            if not result.get("ok") and previous.get("numeric_parser") == "strict" and ("parse" in error or "解析" in error):
+                repaired = {key: value for key, value in previous.items() if key not in {"name", "reason"}}
+                repaired["numeric_parser"] = "semantic"
+                options.append((repaired, "严格解析失败，按实际工具反馈切换为语义解析。"))
+                break
+            if not result.get("guardrails", {}).get("passed", True) and previous.get("outlier_policy") == "iqr_clip":
+                repaired = {key: value for key, value in previous.items() if key not in {"name", "reason"}}
+                repaired["outlier_policy"] = "invalid_to_missing"
+                options.append((repaired, "裁剪未通过约束，保留其他设置并改为修复非法值。"))
+                break
+        if not self._issued:
+            options.append((base, "根据训练画像选择解析、缺失与去重策略。"))
+        elif feedback:
+            # Once an axis has been compared, spend the next slot on another axis.
+            for key, choices in (("class_weight", ("none", "balanced")),
+                                 ("categorical_imputation", ("unknown", "most_frequent")),
+                                 ("numeric_imputation", ("median", "mean"))):
+                tested = {plan.get(key) for plan in self._issued}
+                if set(choices).issubset(tested):
+                    continue
+                alternative = copy.deepcopy(anchor)
+                alternative[key] = choices[1] if anchor.get(key) == choices[0] else choices[0]
+                options.append((alternative, f"以反馈保留的方案为基础，单独比较 {key}。"))
+        normalized_options = []
+        for candidate, reason in options:
+            candidate = {"add_missing_indicators": True, "threshold_policy": "validation_macro_f1", **candidate}
+            normalized_options.append((candidate, reason))
+        selected = next(((candidate, reason) for candidate, reason in normalized_options
+                         if self._signature(candidate) not in seen), None)
+        if selected is None:
+            return ProviderResponse({"role": "assistant", "content": "离线规则模拟没有未重复的受控候选；保留已有结果。"})
+        plan, reason = selected
+        plan = {"name": f"rule_candidate_{len(self._issued) + 1}", **plan,
+                "reason": "离线规则模拟：" + reason}
+        plan.setdefault("add_missing_indicators", True)
+        plan.setdefault("threshold_policy", "validation_macro_f1")
+        self._issued.append(copy.deepcopy(plan))
         return ProviderResponse({
             "role": "assistant", "content": None,
-            "tool_calls": [{"id": f"mock_call_{self._step}", "type": "function", "function": {
+            "tool_calls": [{"id": f"mock_call_{len(self._issued)}", "type": "function", "function": {
                 "name": "evaluate_plan", "arguments": json.dumps({"plan": plan}, ensure_ascii=False),
             }}],
         })

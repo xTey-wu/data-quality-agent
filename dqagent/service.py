@@ -32,6 +32,8 @@ class CleaningPlan(BaseModel):
     deduplicate: bool
     class_weight: Literal["none", "balanced"]
     reason: Annotated[str, Field(min_length=1, max_length=1200)]
+    add_missing_indicators: bool = False
+    threshold_policy: Literal["fixed", "validation_macro_f1"] = "fixed"
 
 
 def _now() -> str:
@@ -194,7 +196,7 @@ class CleaningService:
                 raise ServiceError("run_creation_failed", "无法创建新运行，请重试。")
             state = {"schema_version": 1, "run_id": run_id, "status": "open", "created_at_utc": _now(),
                      "seed": self.seed, "max_candidates": self.MAX_CANDIDATES, "candidate_attempts": 0,
-                     "candidates": [], "best_plan": None, "best_validation": None,
+                     "candidates": [], "best_plan": None, "best_validation": None, "best_decision_threshold": None,
                      "input_sha256": hashes, "artifacts": ["state.json", "trace.jsonl"],
                      "execution_mode": "host_tool_execution", "internal_model_calls": 0}
             self._atomic_json(run_dir / "state.json", state)
@@ -229,6 +231,13 @@ class CleaningService:
                 metrics = result.get("validation") or {}
                 score = metrics.get("macro_f1")
                 valid_score = type(score) in (float, int) and math.isfinite(score) and 0 <= score <= 1
+                threshold = result.get("decision_threshold", metrics.get("decision_threshold"))
+                if threshold is None and candidate.get("threshold_policy", "fixed") == "fixed":
+                    threshold = 0.5
+                valid_threshold = type(threshold) in (float, int) and math.isfinite(threshold) and 0 <= threshold <= 1
+                if result.get("ok") and not valid_threshold:
+                    result = {**result, "ok": False, "error": "验证阈值缺失或无效，不能保留此方案。",
+                              "guardrails": {"passed": False, "reasons": ["Missing or invalid validation decision threshold."]}}
                 passed = result.get("ok") is True and result.get("guardrails", {}).get("passed") is True and valid_score
                 previous_score = (state.get("best_validation") or {}).get("macro_f1")
                 selected = passed and (previous_score is None or score > previous_score)
@@ -236,10 +245,13 @@ class CleaningService:
                 summary = {"attempt": state["candidate_attempts"], "plan": candidate,
                            "ok": bool(result.get("ok")), "decision": decision,
                            "validation": result.get("validation"), "guardrails": result.get("guardrails"),
+                           "decision_threshold": float(threshold) if valid_threshold else None,
+                           "threshold_selection": result.get("threshold_selection"),
                            "error": result.get("error")}
                 state["candidates"].append(summary)
                 if selected:
                     state["best_plan"], state["best_validation"] = candidate, result["validation"]
+                    state["best_decision_threshold"] = float(threshold)
                 self._atomic_json(run_dir / "state.json", state)
                 self._trace("evaluate_cleaning_plan", run_dir=run_dir, candidate=summary,
                             retained_plan=(state.get("best_plan") or {}).get("name"))
@@ -249,7 +261,8 @@ class CleaningService:
                 return self._envelope(ok=True, run_id=run_id, candidate=summary,
                     quality_before=prediction_profile(result["quality_before"]) if result.get("quality_before") else None,
                     quality_after=prediction_profile(result["quality_after"]) if result.get("quality_after") else None,
-                    retained_plan=state["best_plan"], remaining_candidates=state["max_candidates"] - state["candidate_attempts"])
+                    retained_plan=state["best_plan"], best_decision_threshold=state.get("best_decision_threshold"),
+                    remaining_candidates=state["max_candidates"] - state["candidate_attempts"])
         except ServiceError as error:
             return self._failure(error, run_dir=run_dir)
         except Exception:
@@ -259,6 +272,7 @@ class CleaningService:
         visible = {key: state.get(key) for key in (
             "run_id", "status", "created_at_utc", "candidate_attempts", "max_candidates", "candidates",
             "best_plan", "best_validation", "artifacts", "final_metrics", "finalization_error",
+            "best_decision_threshold", "frozen_decision_threshold",
         ) if key in state}
         visible["remaining_candidates"] = max(0, state["max_candidates"] - state["candidate_attempts"])
         return self._envelope(ok=True, **visible)
@@ -290,6 +304,12 @@ class CleaningService:
                 self._ensure_open(state, run_dir)
                 if state["best_plan"] is None:
                     raise ServiceError("no_valid_plan", "尚无通过检查的方案，请先评估候选。")
+                locked_threshold = state.get("best_decision_threshold")
+                if locked_threshold is None and state["best_plan"].get("threshold_policy", "fixed") == "fixed":
+                    locked_threshold = 0.5
+                if (type(locked_threshold) not in (float, int) or not math.isfinite(locked_threshold)
+                        or not 0 <= locked_threshold <= 1):
+                    raise ServiceError("missing_locked_threshold", "验证阈值尚未锁定，不能进行最终测试。")
                 train, validation, _ = self._training_inputs(state)
                 # Exclusive durable claim also blocks repeats after a crash or restart.
                 try:
@@ -301,12 +321,13 @@ class CleaningService:
                     raise ServiceError("run_frozen", "运行已经冻结，不能重复执行最终测试。") from None
                 claimed = True
                 state["status"], state["frozen_plan"], state["frozen_at_utc"] = "finalizing", state["best_plan"], _now()
+                state["frozen_decision_threshold"] = float(locked_threshold)
                 self._atomic_json(run_dir / "state.json", state)
-                self._trace("plan_frozen", run_dir=run_dir, plan=state["frozen_plan"])
+                self._trace("plan_frozen", run_dir=run_dir, plan=state["frozen_plan"], decision_threshold=locked_threshold)
                 test_path = self._data_path("test.csv")
                 test = load_table(test_path)
                 final = modeling.finalize_plan(train, validation, test, state["frozen_plan"],
-                                              run_dir / "artifacts", seed=state["seed"])
+                                              run_dir / "artifacts", seed=state["seed"], decision_threshold=locked_threshold)
                 state["status"] = "finalized"
                 state["final_metrics"] = {"validation": final["validation"], "test": final["test"],
                                           "test_evaluations": final["test_evaluations"]}

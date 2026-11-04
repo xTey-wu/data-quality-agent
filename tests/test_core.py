@@ -7,6 +7,7 @@ import urllib.error
 import urllib.request
 import zipfile
 
+import joblib
 import pandas as pd
 import pytest
 
@@ -14,7 +15,9 @@ from dqagent import data
 from dqagent.modeling import evaluate_plan, finalize_plan
 from dqagent.data import download_bank, prepare_dataset, load_table
 from dqagent.quality import Cleaner, evaluate_repairs, profile, validate_plan
-from dqagent.schema import DEFAULT_PLAN, FEATURES, MODEL_FEATURES, MODEL_NUMERIC, ROW_ID, TARGET
+from dqagent.schema import (DEFAULT_PLAN, FEATURES, MISSING_INDICATOR_COLUMNS,
+                            MODEL_FEATURES, MODEL_NUMERIC, OPTIONAL_PLAN_DEFAULTS,
+                            ROW_ID, TARGET)
 
 
 def table(rows=80):
@@ -316,6 +319,211 @@ def test_plan_rejects_extra_actions_and_nonboolean_deduplicate():
         validate_plan({**DEFAULT_PLAN, "python_code": "anything"})
     with pytest.raises(ValueError):
         validate_plan({**DEFAULT_PLAN, "deduplicate": "false"})
+
+
+def test_legacy_plan_gets_optional_defaults_without_mutating_the_input():
+    legacy = {key: value for key, value in DEFAULT_PLAN.items() if key not in OPTIONAL_PLAN_DEFAULTS}
+    original = dict(legacy)
+    validated = validate_plan(legacy)
+    assert validated == DEFAULT_PLAN
+    assert legacy == original
+    assert "add_missing_indicators" not in legacy
+    assert "threshold_policy" not in legacy
+    enabled = validate_plan({**legacy, "add_missing_indicators": True})
+    assert enabled["add_missing_indicators"] is True
+    assert enabled["threshold_policy"] == "fixed"
+    adaptive = validate_plan({**legacy, "threshold_policy": "validation_macro_f1"})
+    assert adaptive["threshold_policy"] == "validation_macro_f1"
+    assert adaptive["add_missing_indicators"] is False
+    with pytest.raises(ValueError, match="missing"):
+        validate_plan({key: value for key, value in legacy.items() if key != "reason"})
+    with pytest.raises(ValueError, match="extra"):
+        validate_plan({**legacy, "unexpected_action": False})
+
+
+@pytest.mark.parametrize("key,value", [
+    ("add_missing_indicators", "false"), ("add_missing_indicators", 1),
+    ("add_missing_indicators", None), ("add_missing_indicators", []),
+    ("threshold_policy", True), ("threshold_policy", None),
+    ("threshold_policy", 0.5), ("threshold_policy", "test_macro_f1"),
+])
+def test_optional_plan_fields_reject_invalid_types_and_values(key, value):
+    with pytest.raises(ValueError):
+        validate_plan({**DEFAULT_PLAN, key: value})
+
+
+def test_missing_indicators_preserve_real_unknown_and_minus_one_semantics():
+    dirty = table(8)
+    dirty.loc[0, "pdays"] = ""
+    dirty.loc[2, "pdays"] = "-9"
+    dirty.loc[1, "contact"] = ""
+    dirty.loc[2, "contact"] = " UNKNOWN "
+    dirty.loc[3, "age"] = "-12"
+    dirty.loc[4, "age"] = "24 years"
+    dirty["duration"] = ["", "invalid", "-99", None] * 2
+    enabled = Cleaner({**DEFAULT_PLAN, "add_missing_indicators": True})
+    cleaned = enabled.fit_transform(dirty)
+    assert cleaned.loc[0, "pdays"] == cleaned.loc[1, "pdays"] == -1
+    assert cleaned.loc[0, "pdays__missing"] == 1
+    assert cleaned.loc[1, "pdays__missing"] == 0
+    assert cleaned.loc[2, "pdays__missing"] == 1
+    assert cleaned.loc[0, "contact"] == cleaned.loc[1, "contact"] == "unknown"
+    assert cleaned.loc[0, "contact__missing"] == 0
+    assert cleaned.loc[1, "contact__missing"] == 1
+    assert cleaned.loc[2, "contact__missing"] == 0
+    assert cleaned.loc[3, "age__missing"] == 1
+    assert cleaned.loc[3, "age"] >= 0
+    assert cleaned.loc[4, "age__missing"] == 0
+    assert cleaned["duration"].tolist() == dirty["duration"].tolist()
+    assert set(cleaned.columns) - set(dirty.columns) == set(MISSING_INDICATOR_COLUMNS)
+    assert len(MISSING_INDICATOR_COLUMNS) == 15
+    assert all(str(cleaned[column].dtype) == "int8" for column in MISSING_INDICATOR_COLUMNS)
+    assert not {"duration__missing", "_row_id__missing", "y__missing"} & set(cleaned.columns)
+    description = enabled.description()
+    assert description["missing_indicator_columns"] == MISSING_INDICATOR_COLUMNS
+    assert description["fit_scope"] == "training only"
+    assert description["prediction_features"] == MODEL_FEATURES + MISSING_INDICATOR_COLUMNS
+
+
+def test_validation_missing_indicators_exist_even_when_training_has_no_missing():
+    cleaner = Cleaner({**DEFAULT_PLAN, "add_missing_indicators": True})
+    training = cleaner.fit_transform(table(20))
+    assert not training[MISSING_INDICATOR_COLUMNS].to_numpy().any()
+    learned_numeric = dict(cleaner.numeric_fill_)
+    learned_categorical = dict(cleaner.categorical_fill_)
+    validation = table(4)
+    validation.loc[0, "age"] = ""
+    validation.loc[1, "pdays"] = ""
+    validation.loc[2, "contact"] = ""
+    processed = cleaner.transform(validation)
+    assert processed.loc[0, "age__missing"] == 1
+    assert processed.loc[1, "pdays__missing"] == 1
+    assert processed.loc[2, "contact__missing"] == 1
+    assert processed.loc[3, "contact__missing"] == 0
+    assert list(processed[MISSING_INDICATOR_COLUMNS].columns) == MISSING_INDICATOR_COLUMNS
+    assert cleaner.numeric_fill_ == learned_numeric
+    assert cleaner.categorical_fill_ == learned_categorical
+
+
+@pytest.mark.parametrize("add_indicators", [False, True])
+def test_inference_needs_only_prediction_features_and_keeps_fitted_statistics(add_indicators):
+    cleaner = Cleaner({**DEFAULT_PLAN, "add_missing_indicators": add_indicators}).fit(table(20))
+    learned_numeric = dict(cleaner.numeric_fill_)
+    learned_categorical = dict(cleaner.categorical_fill_)
+    learned_bounds = dict(cleaner.iqr_bounds_)
+    incoming = table(4)[MODEL_FEATURES].copy()
+    incoming.loc[0, "age"] = ""
+    incoming.loc[1, "pdays"] = ""
+    incoming.loc[2, "contact"] = ""
+    prepared = cleaner.transform(incoming)
+    assert TARGET not in prepared.columns
+    assert "duration" not in prepared.columns
+    assert ROW_ID not in prepared.columns
+    assert len(prepared) == len(incoming)
+    assert not prepared[MODEL_FEATURES].isna().to_numpy().any()
+    if add_indicators:
+        assert prepared.loc[0, "age__missing"] == 1
+        assert prepared.loc[1, "pdays__missing"] == 1
+        assert prepared.loc[2, "contact__missing"] == 1
+        assert "duration__missing" not in prepared.columns
+        assert "y__missing" not in prepared.columns
+    else:
+        assert not set(MISSING_INDICATOR_COLUMNS) & set(prepared.columns)
+    assert cleaner.numeric_fill_ == learned_numeric
+    assert cleaner.categorical_fill_ == learned_categorical
+    assert cleaner.iqr_bounds_ == learned_bounds
+
+
+def test_inference_preserves_optional_metadata_if_provided():
+    cleaner = Cleaner(DEFAULT_PLAN).fit(table(20))
+    incoming = table(4)
+    incoming["duration"] = ["", "not yet known", "-99", None]
+    incoming[TARGET] = ["unlabeled", "", None, "keep unchanged"]
+    prepared = cleaner.transform(incoming)
+    for column in (ROW_ID, "duration", TARGET):
+        assert prepared[column].tolist() == incoming[column].tolist()
+
+
+def test_inference_rejects_missing_prediction_features_and_training_stays_strict():
+    cleaner = Cleaner(DEFAULT_PLAN).fit(table(20))
+    incoming = table(4)[MODEL_FEATURES]
+    with pytest.raises(ValueError, match="age"):
+        cleaner.transform(incoming.drop(columns="age"))
+    with pytest.raises(ValueError, match="y"):
+        Cleaner(DEFAULT_PLAN).fit(table(20).drop(columns=TARGET))
+    with pytest.raises(ValueError, match="y"):
+        cleaner.transform(table(4).drop(columns=TARGET), training=True)
+    with pytest.raises(ValueError, match="duration"):
+        Cleaner(DEFAULT_PLAN).fit(table(20).drop(columns="duration"))
+    with pytest.raises(ValueError, match="duration"):
+        profile(table(4).drop(columns="duration"))
+
+
+def test_optional_defaults_preserve_legacy_cleaning_and_enabled_flags_do_not_change_values():
+    dirty = table(20)
+    dirty.loc[0, "age"] = ""
+    dirty.loc[1, "age"] = "-12"
+    dirty.loc[2, "contact"] = ""
+    legacy = {key: value for key, value in DEFAULT_PLAN.items() if key not in OPTIONAL_PLAN_DEFAULTS}
+    old = Cleaner(legacy).fit_transform(dirty)
+    default = Cleaner(DEFAULT_PLAN).fit_transform(dirty)
+    enabled = Cleaner({**DEFAULT_PLAN, "add_missing_indicators": True}).fit_transform(dirty)
+    pd.testing.assert_frame_equal(old, default)
+    pd.testing.assert_frame_equal(default, enabled.drop(columns=MISSING_INDICATOR_COLUMNS))
+    assert not set(MISSING_INDICATOR_COLUMNS) & set(default.columns)
+    assert Cleaner(legacy).description()["missing_indicator_columns"] == []
+
+
+def test_legacy_joblib_cleaner_restores_optional_defaults_and_fitted_state(tmp_path):
+    training = table(20)
+    training.loc[0, "age"] = ""
+    training.loc[1, "contact"] = ""
+    expected = Cleaner(DEFAULT_PLAN).fit(training)
+    legacy = Cleaner(DEFAULT_PLAN).fit(training)
+    legacy.plan = {key: value for key, value in legacy.plan.items() if key not in OPTIONAL_PLAN_DEFAULTS}
+    del legacy.missing_indicator_columns_
+    legacy.compatibility_marker_ = {"preserve": "other serialized attributes"}
+    path = tmp_path / "trusted_legacy_cleaner.joblib"
+    joblib.dump(legacy, path)
+    restored = joblib.load(path)
+    assert restored.plan == DEFAULT_PLAN
+    assert restored.missing_indicator_columns_ == []
+    assert restored.numeric_fill_ == expected.numeric_fill_
+    assert restored.categorical_fill_ == expected.categorical_fill_
+    assert restored.iqr_bounds_ == expected.iqr_bounds_
+    assert restored.last_changes_ == legacy.last_changes_
+    assert restored.compatibility_marker_ == legacy.compatibility_marker_
+    validation = table(4).drop(columns=[TARGET, "duration"])
+    validation.loc[0, "pdays"] = ""
+    validation.loc[1, "age"] = "-12"
+    validation.loc[2, "contact"] = ""
+    pd.testing.assert_frame_equal(restored.transform(validation), expected.transform(validation))
+    assert restored.description() == expected.description()
+
+
+def test_new_joblib_cleaner_preserves_enabled_indicators_on_load(tmp_path):
+    cleaner = Cleaner({**DEFAULT_PLAN, "add_missing_indicators": True}).fit(table(20))
+    path = tmp_path / "trusted_current_cleaner.joblib"
+    joblib.dump(cleaner, path)
+    restored = joblib.load(path)
+    assert restored.plan == cleaner.plan
+    assert restored.missing_indicator_columns_ == MISSING_INDICATOR_COLUMNS
+    validation = table(4)
+    validation.loc[0, "pdays"] = ""
+    pd.testing.assert_frame_equal(restored.transform(validation), cleaner.transform(validation))
+    assert restored.description() == cleaner.description()
+
+
+def test_missing_indicator_columns_do_not_change_original_value_repair_evaluation():
+    reference = table(20)
+    dirty = reference.copy()
+    dirty.loc[0, "age"] = ""
+    manifest = {"entries": [{"kind": "missing", "row_id": dirty.loc[0, ROW_ID], "column": "age"}],
+                "duplicates": []}
+    without = Cleaner(DEFAULT_PLAN).fit_transform(dirty)
+    with_indicators = Cleaner({**DEFAULT_PLAN, "add_missing_indicators": True}).fit_transform(dirty)
+    assert evaluate_repairs(reference, dirty, without, manifest) == evaluate_repairs(
+        reference, dirty, with_indicators, manifest)
 
 
 def test_finalization_writes_frozen_model_and_blocks_repeat_test(tmp_path):

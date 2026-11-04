@@ -12,7 +12,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import dqagent
-from dqagent.engine import _usage_summary, run_agent
+from dqagent.engine import PLAN_SCHEMA, _usage_summary, _validate_arguments, run_agent
 from dqagent.providers import ChatCompletionsProvider, MockProvider, ProviderError, ProviderResponse
 
 
@@ -37,6 +37,7 @@ def evaluation(train, val, candidate, seed=42):
     passed = candidate["outlier_policy"] != "iqr_clip"
     return {
         "ok": True, "plan": candidate, "validation": {"macro_f1": 0.71},
+        "decision_threshold": 0.42 if candidate.get("threshold_policy") == "validation_macro_f1" else 0.5,
         "quality_before": {"rows": 10}, "quality_after": {"rows": 10},
         "guardrails": {"passed": passed, "reasons": [] if passed else ["excessive_clipping"]},
         "changes": {}, "error": None,
@@ -63,7 +64,7 @@ class ScriptedProvider(MockProvider):
 
 
 class AgentTests(unittest.TestCase):
-    def test_offline_mock_repairs_strict_error_and_rolls_back_bad_candidate(self):
+    def test_offline_mock_repairs_strict_error_and_compares_valid_candidates(self):
         with tempfile.TemporaryDirectory() as directory, fake_tools():
             summary = run_agent(object(), object(), directory)
             events = [json.loads(line) for line in (Path(directory) / "trace.jsonl").read_text().splitlines()]
@@ -71,11 +72,52 @@ class AgentTests(unittest.TestCase):
             self.assertEqual(summary["mode"], "rule_simulation")
             self.assertFalse(summary["is_real_model"])
             self.assertEqual(summary["real_model_validation"], "not_run")
-            self.assertEqual(summary["selected_plan"]["name"], "semantic_repair")
+            self.assertEqual(summary["selected_plan"]["numeric_parser"], "semantic")
+            self.assertGreaterEqual(sum(candidate["ok"] for candidate in summary["candidates"]), 2)
+            self.assertEqual(summary["best_decision_threshold"], 0.42)
             self.assertEqual(summary["candidates"][0]["decision"], "rejected")
             self.assertTrue(any(entry["event"] == "rollback" for entry in events))
             self.assertIsNone(summary["usage"]["estimated_cost"])
             self.assertEqual(summary["model_calls"], 0)
+
+    def test_legacy_and_extended_plan_arguments_are_compatible(self):
+        legacy = _validate_arguments(json.dumps({"plan": plan()}))
+        self.assertFalse(legacy["add_missing_indicators"])
+        self.assertEqual(legacy["threshold_policy"], "fixed")
+        self.assertNotIn("add_missing_indicators", PLAN_SCHEMA["required"])
+        self.assertNotIn("threshold_policy", PLAN_SCHEMA["required"])
+        extended = _validate_arguments(json.dumps({"plan": {**plan(), "add_missing_indicators": True,
+                                                           "threshold_policy": "validation_macro_f1"}}))
+        self.assertTrue(extended["add_missing_indicators"])
+        with self.assertRaises(ValueError):
+            _validate_arguments(json.dumps({"plan": {**plan(), "add_missing_indicators": 1}}))
+
+    def test_tuned_plan_without_validation_threshold_is_rejected(self):
+        tuned = {**plan(), "threshold_policy": "validation_macro_f1"}
+        provider = ScriptedProvider([
+            {"role": "assistant", "content": None, "tool_calls": [tool_call("tuned", tuned)]},
+            {"role": "assistant", "content": "done"},
+        ])
+        def missing_threshold(*args, **kwargs):
+            result = evaluation(*args, **kwargs)
+            result.pop("decision_threshold")
+            return result
+        with tempfile.TemporaryDirectory() as directory, fake_tools(missing_threshold):
+            summary = run_agent(object(), object(), directory, provider=provider)
+            self.assertEqual(summary["status"], "failed")
+            self.assertIsNone(summary["best_decision_threshold"])
+
+    def test_unsafe_iqr_candidate_rolls_back_without_discarding_best(self):
+        provider = ScriptedProvider([
+            {"role": "assistant", "content": None, "tool_calls": [tool_call("safe", plan("safe"))]},
+            {"role": "assistant", "content": None, "tool_calls": [tool_call("unsafe", {**plan("unsafe"), "outlier_policy": "iqr_clip"})]},
+            {"role": "assistant", "content": "done"},
+        ])
+        with tempfile.TemporaryDirectory() as directory, fake_tools():
+            summary = run_agent(object(), object(), directory, provider=provider)
+            self.assertEqual(summary["selected_plan"]["name"], "safe")
+            self.assertEqual(summary["candidates"][1]["decision"], "rejected")
+            self.assertIn('"event": "rollback"', (Path(directory) / "trace.jsonl").read_text())
 
     def test_every_tool_call_gets_a_response_and_assistant_fields_survive(self):
         first = {"role": "assistant", "content": None, "reasoning_content": "provider-specific state", "tool_calls": [
@@ -190,6 +232,64 @@ class AgentTests(unittest.TestCase):
 class ProviderTests(unittest.TestCase):
     def config(self):
         return {"provider": "qwen", "model": "qwen3.7-plus", "api_key_env": "DQAGENT_TEST_KEY", "max_retries": 0}
+
+    def mock_first(self, profile=None):
+        provider = MockProvider()
+        messages = [] if profile is None else [{"role": "user", "content": json.dumps({"training_profile": profile})}]
+        response = provider.complete(messages, [])
+        candidate = json.loads(response.message["tool_calls"][0]["function"]["arguments"])["plan"]
+        return provider, messages, response, candidate
+
+    def mock_feedback(self, provider, messages, response, candidate, score=0.7, retained=None, error=None):
+        result = {"ok": error is None, "plan": candidate, "validation": {"macro_f1": score} if error is None else None,
+                  "guardrails": {"passed": error is None}, "error": error,
+                  "retained_plan": retained or candidate["name"], "agent_decision": "selected" if error is None else "rejected"}
+        messages.extend([response.message, {"role": "tool", "tool_call_id": response.message["tool_calls"][0]["id"],
+                                           "content": json.dumps(result)}])
+        new_response = provider.complete(messages, [])
+        candidate = json.loads(new_response.message["tool_calls"][0]["function"]["arguments"])["plan"]
+        return new_response, candidate
+
+    def test_mock_uses_known_format_errors_without_wasting_strict_attempt(self):
+        _, _, _, formatted = self.mock_first({"rows": 100, "numeric_parse_errors": 3, "numeric_range_violations": 2})
+        _, _, _, clean = self.mock_first({"rows": 100, "numeric_parse_errors": 0, "numeric_range_violations": 0})
+        self.assertEqual(formatted["numeric_parser"], "semantic")
+        self.assertEqual(clean["numeric_parser"], "strict")
+        self.assertEqual(formatted["outlier_policy"], "invalid_to_missing")
+        self.assertEqual(clean["outlier_policy"], "keep")
+        self.assertTrue(formatted["add_missing_indicators"])
+        self.assertEqual(formatted["threshold_policy"], "validation_macro_f1")
+
+    def test_mock_error_feedback_changes_parser_not_only_reason(self):
+        provider, messages, response, first = self.mock_first()
+        self.assertEqual(first["numeric_parser"], "strict")
+        _, corrected = self.mock_feedback(provider, messages, response, first, error="numeric_parse_failed")
+        self.assertEqual(corrected["numeric_parser"], "semantic")
+
+    def test_mock_balanced_candidate_is_separate_from_outlier_clipping(self):
+        provider, messages, response, first = self.mock_first({"numeric_parse_errors": 1, "numeric_range_violations": 1})
+        _, second = self.mock_feedback(provider, messages, response, first)
+        self.assertEqual(second["class_weight"], "balanced")
+        self.assertEqual(second["outlier_policy"], first["outlier_policy"])
+        self.assertNotEqual(second["outlier_policy"], "iqr_clip")
+
+    def test_mock_retained_feedback_controls_later_categorical_and_numeric_candidates(self):
+        branches = []
+        for balanced_wins in (False, True):
+            provider, messages, response, first = self.mock_first({"numeric_parse_errors": 1})
+            second_response, second = self.mock_feedback(provider, messages, response, first, score=0.7)
+            third_response, third = self.mock_feedback(provider, messages, second_response, second,
+                score=0.8 if balanced_wins else 0.6, retained=second["name"] if balanced_wins else first["name"])
+            self.assertEqual(third["class_weight"], "balanced" if balanced_wins else "none")
+            self.assertEqual(third["categorical_imputation"], "most_frequent")
+            fourth_response, fourth = self.mock_feedback(provider, messages, third_response, third,
+                score=0.9, retained=third["name"])
+            self.assertEqual(fourth["numeric_imputation"], "mean")
+            self.assertEqual(fourth["categorical_imputation"], third["categorical_imputation"])
+            signatures = {provider._signature(candidate) for candidate in (first, second, third, fourth)}
+            self.assertEqual(len(signatures), 4)
+            branches.append(third)
+        self.assertNotEqual(branches[0]["class_weight"], branches[1]["class_weight"])
 
     def test_missing_key_does_not_send_http(self):
         with patch.dict("os.environ", {"DQAGENT_TEST_KEY": ""}):

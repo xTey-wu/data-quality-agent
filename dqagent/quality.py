@@ -8,8 +8,9 @@ import unicodedata
 import numpy as np
 import pandas as pd
 
-from .schema import (CATEGORICAL, DEFAULT_PLAN, FEATURES, MODEL_FEATURES, MODEL_NUMERIC, NUMERIC,
-                     NUMERIC_FALLBACKS, PLAN_OPTIONS, ROW_ID, TARGET)
+from .schema import (CATEGORICAL, DEFAULT_PLAN, FEATURES, MISSING_INDICATOR_COLUMNS,
+                     MODEL_FEATURES, MODEL_NUMERIC, NUMERIC, NUMERIC_FALLBACKS,
+                     OPTIONAL_PLAN_DEFAULTS, PLAN_OPTIONS, ROW_ID, TARGET)
 
 MISSING_MARKERS = {"", "?", "na", "n/a", "nan", "none", "null"}
 MAX_LEGAL_CLIP_FRACTION = 0.02
@@ -18,9 +19,11 @@ MAX_LEGAL_CLIP_FRACTION = 0.02
 def validate_plan(plan: dict) -> dict:
     if not isinstance(plan, dict):
         raise ValueError("A cleaning plan must be a JSON object.")
-    required = set(DEFAULT_PLAN)
-    if set(plan) != required:
-        raise ValueError(f"Plan fields must be exactly {sorted(required)}; missing={sorted(required - set(plan))}, extra={sorted(set(plan) - required)}")
+    allowed = set(DEFAULT_PLAN)
+    required = allowed - set(OPTIONAL_PLAN_DEFAULTS)
+    if not required.issubset(plan) or set(plan) - allowed:
+        raise ValueError(f"Plan requires {sorted(required)}; missing={sorted(required - set(plan))}, extra={sorted(set(plan) - allowed)}")
+    plan = {**OPTIONAL_PLAN_DEFAULTS, **plan}
     for key in ("name", "reason"):
         if not isinstance(plan[key], str) or not plan[key].strip():
             raise ValueError(f"{key} must be a nonempty string.")
@@ -29,8 +32,9 @@ def validate_plan(plan: dict) -> dict:
     for key, options in PLAN_OPTIONS.items():
         if not isinstance(plan[key], str) or plan[key] not in options:
             raise ValueError(f"Unsupported {key}: choose from {sorted(options)}")
-    if type(plan["deduplicate"]) is not bool:
-        raise ValueError("deduplicate must be a JSON boolean.")
+    for key in ("deduplicate", "add_missing_indicators"):
+        if type(plan[key]) is not bool:
+            raise ValueError(f"{key} must be a JSON boolean.")
     return dict(plan)
 
 
@@ -84,8 +88,14 @@ def _invalid_numeric(values: pd.Series, column: str) -> pd.Series:
     return invalid
 
 
-def _require_columns(df: pd.DataFrame) -> None:
-    absent = set(FEATURES + [TARGET]) - set(df.columns)
+def _require_columns(df: pd.DataFrame, *, require_target: bool = True,
+                     require_duration: bool = True) -> None:
+    required = set(MODEL_FEATURES)
+    if require_target:
+        required.add(TARGET)
+    if require_duration:
+        required.add("duration")
+    absent = required - set(df.columns)
     if absent:
         raise ValueError(f"Missing columns: {sorted(absent)}")
     if ROW_ID in df and (df[ROW_ID].duplicated().any() or df[ROW_ID].isna().any()):
@@ -151,13 +161,23 @@ class Cleaner:
 
     def __init__(self, plan: dict):
         self.plan = validate_plan(plan)
+        self.missing_indicator_columns_ = (
+            list(MISSING_INDICATOR_COLUMNS) if self.plan["add_missing_indicators"] else [])
         self.numeric_fill_: dict[str, float] = {}
         self.categorical_fill_: dict[str, str] = {}
         self.iqr_bounds_: dict[str, list[float]] = {}
         self.last_changes_: dict = {}
 
-    def _convert(self, df: pd.DataFrame) -> pd.DataFrame:
-        _require_columns(df)
+    def __setstate__(self, state: dict) -> None:
+        """Restore fitted cleaners saved before optional plan fields existed."""
+        self.__dict__.update(state)
+        self.plan = validate_plan(self.plan)
+        if "missing_indicator_columns_" not in state:
+            self.missing_indicator_columns_ = (
+                list(MISSING_INDICATOR_COLUMNS) if self.plan["add_missing_indicators"] else [])
+
+    def _convert(self, df: pd.DataFrame, *, inference: bool = False) -> pd.DataFrame:
+        _require_columns(df, require_target=not inference, require_duration=not inference)
         converted = df.copy()
         errors = {}
         for column in MODEL_NUMERIC:
@@ -232,11 +252,14 @@ class Cleaner:
     def transform(self, df: pd.DataFrame, training: bool = False) -> pd.DataFrame:
         if not self.numeric_fill_:
             raise ValueError("Cleaner must be fitted on training data before transform.")
-        normalized = self._convert(df)
+        normalized = self._convert(df, inference=not training)
         before = len(normalized)
         if training:
             normalized = self._training_rows(normalized)
         converted, changes = self._outliers(normalized)
+        if self.plan["add_missing_indicators"]:
+            for column, indicator in zip(MODEL_FEATURES, self.missing_indicator_columns_):
+                converted[indicator] = converted[column].isna().astype("int8")
         changes["numeric_missing_filled"] = int(converted[MODEL_NUMERIC].isna().sum().sum())
         changes["categorical_missing_filled"] = int(converted[CATEGORICAL].isna().sum().sum())
         for column, value in self.numeric_fill_.items():
@@ -255,7 +278,10 @@ class Cleaner:
     def description(self) -> dict:
         return {"plan": self.plan, "numeric_fill": self.numeric_fill_,
                 "categorical_fill": self.categorical_fill_, "iqr_bounds": self.iqr_bounds_,
-                "fit_scope": "training only", "prediction_features": MODEL_FEATURES,
+                "fit_scope": "training only",
+                "prediction_features": MODEL_FEATURES + self.missing_indicator_columns_,
+                "missing_indicator_columns": self.missing_indicator_columns_,
+                "missing_indicator_definition": "Fixed prediction-field indicators: 1 after outlier replacement and before filling, otherwise 0. Real unknown categories and valid pdays=-1 are not missing. Columns are available even when training had no missing values; validation/test never fit statistics.",
                 "deduplication": "Training only: normalized prediction inputs and target, before outlier replacement and imputation; no claim of customer-entity deduplication.",
                 "preserved_fields": {"duration": "Unchanged; excluded from fitting, parsing, clipping, imputation, duplicate decisions and quality guardrails."},
                 "max_legal_clip_fraction": MAX_LEGAL_CLIP_FRACTION,

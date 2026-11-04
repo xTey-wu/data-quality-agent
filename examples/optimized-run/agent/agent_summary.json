@@ -1,0 +1,686 @@
+{
+  "mode": "rule_simulation",
+  "is_real_model": false,
+  "provider": "mock",
+  "model": "rule-simulation-v2",
+  "parameters": {
+    "deterministic": true
+  },
+  "status": "completed",
+  "termination": "candidate_budget",
+  "real_model_validation": "not_run",
+  "seed": 42,
+  "rounds": 4,
+  "provider_calls": 4,
+  "model_calls": 0,
+  "successful_model_responses": 0,
+  "budgets": {
+    "max_candidates": 4,
+    "max_rounds": 8,
+    "max_tool_actions": 8,
+    "max_http_requests_including_retries": 0,
+    "candidate_attempts": 4,
+    "candidates_evaluated": 4,
+    "tool_calls_received": 4,
+    "tool_actions_processed": 4,
+    "invalid_tool_calls": 0
+  },
+  "candidates": [
+    {
+      "index": 1,
+      "plan": {
+        "add_missing_indicators": true,
+        "threshold_policy": "validation_macro_f1",
+        "name": "rule_candidate_1",
+        "numeric_parser": "semantic",
+        "numeric_imputation": "median",
+        "categorical_imputation": "unknown",
+        "outlier_policy": "invalid_to_missing",
+        "deduplicate": true,
+        "class_weight": "none",
+        "reason": "离线规则模拟：根据训练画像选择解析、缺失与去重策略。"
+      },
+      "ok": true,
+      "guardrails": {
+        "passed": true,
+        "reasons": [],
+        "max_legal_clip_fraction": 0.02,
+        "maximum_training_row_removal_fraction": 0.2
+      },
+      "validation": {
+        "macro_f1": 0.6810465809881812,
+        "precision": 0.44984802431610943,
+        "positive_f1": 0.43422982885085576,
+        "minority_recall": 0.41965973534971646,
+        "average_precision": 0.40333852023086586,
+        "balanced_accuracy": 0.6758243566528142,
+        "accuracy": 0.8720415837204158,
+        "confusion_matrix": [
+          [
+            7441,
+            543
+          ],
+          [
+            614,
+            444
+          ]
+        ],
+        "confusion_matrix_labels": [
+          "no",
+          "yes"
+        ],
+        "rows": 9042,
+        "positive_class": "yes",
+        "decision_threshold": 0.2
+      },
+      "error": null,
+      "decision_threshold": 0.2,
+      "threshold_selection": {
+        "policy": "validation_macro_f1",
+        "candidates_evaluated": 19,
+        "fit_scope": "validation only",
+        "decision_threshold": 0.2,
+        "positive_prediction_rule": "probability > decision_threshold",
+        "grid": [
+          0.05,
+          0.1,
+          0.15,
+          0.2,
+          0.25,
+          0.3,
+          0.35,
+          0.4,
+          0.45,
+          0.5,
+          0.55,
+          0.6,
+          0.65,
+          0.7,
+          0.75,
+          0.8,
+          0.85,
+          0.9,
+          0.95
+        ],
+        "objective": "macro_f1",
+        "validation_macro_f1": 0.6810465809881812,
+        "tie_break": "closest to 0.5, then higher threshold"
+      },
+      "decision": "selected"
+    },
+    {
+      "index": 2,
+      "plan": {
+        "add_missing_indicators": true,
+        "threshold_policy": "validation_macro_f1",
+        "name": "rule_candidate_2",
+        "numeric_parser": "semantic",
+        "numeric_imputation": "median",
+        "categorical_imputation": "unknown",
+        "outlier_policy": "invalid_to_missing",
+        "deduplicate": true,
+        "class_weight": "balanced",
+        "reason": "离线规则模拟：以反馈保留的方案为基础，单独比较 class_weight。"
+      },
+      "ok": true,
+      "guardrails": {
+        "passed": true,
+        "reasons": [],
+        "max_legal_clip_fraction": 0.02,
+        "maximum_training_row_removal_fraction": 0.2
+      },
+      "validation": {
+        "macro_f1": 0.6801018918990633,
+        "precision": 0.4515463917525773,
+        "positive_f1": 0.4319526627218935,
+        "minority_recall": 0.41398865784499056,
+        "average_precision": 0.4017070824290563,
+        "balanced_accuracy": 0.6736776956559622,
+        "accuracy": 0.8725945587259456,
+        "confusion_matrix": [
+          [
+            7452,
+            532
+          ],
+          [
+            620,
+            438
+          ]
+        ],
+        "confusion_matrix_labels": [
+          "no",
+          "yes"
+        ],
+        "rows": 9042,
+        "positive_class": "yes",
+        "decision_threshold": 0.65
+      },
+      "error": null,
+      "decision_threshold": 0.65,
+      "threshold_selection": {
+        "policy": "validation_macro_f1",
+        "candidates_evaluated": 19,
+        "fit_scope": "validation only",
+        "decision_threshold": 0.65,
+        "positive_prediction_rule": "probability > decision_threshold",
+        "grid": [
+          0.05,
+          0.1,
+          0.15,
+          0.2,
+          0.25,
+          0.3,
+          0.35,
+          0.4,
+          0.45,
+          0.5,
+          0.55,
+          0.6,
+          0.65,
+          0.7,
+          0.75,
+          0.8,
+          0.85,
+          0.9,
+          0.95
+        ],
+        "objective": "macro_f1",
+        "validation_macro_f1": 0.6801018918990633,
+        "tie_break": "closest to 0.5, then higher threshold"
+      },
+      "decision": "not_selected"
+    },
+    {
+      "index": 3,
+      "plan": {
+        "add_missing_indicators": true,
+        "threshold_policy": "validation_macro_f1",
+        "name": "rule_candidate_3",
+        "numeric_parser": "semantic",
+        "numeric_imputation": "median",
+        "categorical_imputation": "most_frequent",
+        "outlier_policy": "invalid_to_missing",
+        "deduplicate": true,
+        "class_weight": "none",
+        "reason": "离线规则模拟：以反馈保留的方案为基础，单独比较 categorical_imputation。"
+      },
+      "ok": true,
+      "guardrails": {
+        "passed": true,
+        "reasons": [],
+        "max_legal_clip_fraction": 0.02,
+        "maximum_training_row_removal_fraction": 0.2
+      },
+      "validation": {
+        "macro_f1": 0.6809137522329057,
+        "precision": 0.4502032520325203,
+        "positive_f1": 0.4338883447600392,
+        "minority_recall": 0.41871455576559546,
+        "average_precision": 0.4034427983784988,
+        "balanced_accuracy": 0.6754770173617557,
+        "accuracy": 0.8721521787215218,
+        "confusion_matrix": [
+          [
+            7443,
+            541
+          ],
+          [
+            615,
+            443
+          ]
+        ],
+        "confusion_matrix_labels": [
+          "no",
+          "yes"
+        ],
+        "rows": 9042,
+        "positive_class": "yes",
+        "decision_threshold": 0.2
+      },
+      "error": null,
+      "decision_threshold": 0.2,
+      "threshold_selection": {
+        "policy": "validation_macro_f1",
+        "candidates_evaluated": 19,
+        "fit_scope": "validation only",
+        "decision_threshold": 0.2,
+        "positive_prediction_rule": "probability > decision_threshold",
+        "grid": [
+          0.05,
+          0.1,
+          0.15,
+          0.2,
+          0.25,
+          0.3,
+          0.35,
+          0.4,
+          0.45,
+          0.5,
+          0.55,
+          0.6,
+          0.65,
+          0.7,
+          0.75,
+          0.8,
+          0.85,
+          0.9,
+          0.95
+        ],
+        "objective": "macro_f1",
+        "validation_macro_f1": 0.6809137522329057,
+        "tie_break": "closest to 0.5, then higher threshold"
+      },
+      "decision": "not_selected"
+    },
+    {
+      "index": 4,
+      "plan": {
+        "add_missing_indicators": true,
+        "threshold_policy": "validation_macro_f1",
+        "name": "rule_candidate_4",
+        "numeric_parser": "semantic",
+        "numeric_imputation": "mean",
+        "categorical_imputation": "unknown",
+        "outlier_policy": "invalid_to_missing",
+        "deduplicate": true,
+        "class_weight": "none",
+        "reason": "离线规则模拟：以反馈保留的方案为基础，单独比较 numeric_imputation。"
+      },
+      "ok": true,
+      "guardrails": {
+        "passed": true,
+        "reasons": [],
+        "max_legal_clip_fraction": 0.02,
+        "maximum_training_row_removal_fraction": 0.2
+      },
+      "validation": {
+        "macro_f1": 0.6810465809881812,
+        "precision": 0.44984802431610943,
+        "positive_f1": 0.43422982885085576,
+        "minority_recall": 0.41965973534971646,
+        "average_precision": 0.40335411859642933,
+        "balanced_accuracy": 0.6758243566528142,
+        "accuracy": 0.8720415837204158,
+        "confusion_matrix": [
+          [
+            7441,
+            543
+          ],
+          [
+            614,
+            444
+          ]
+        ],
+        "confusion_matrix_labels": [
+          "no",
+          "yes"
+        ],
+        "rows": 9042,
+        "positive_class": "yes",
+        "decision_threshold": 0.2
+      },
+      "error": null,
+      "decision_threshold": 0.2,
+      "threshold_selection": {
+        "policy": "validation_macro_f1",
+        "candidates_evaluated": 19,
+        "fit_scope": "validation only",
+        "decision_threshold": 0.2,
+        "positive_prediction_rule": "probability > decision_threshold",
+        "grid": [
+          0.05,
+          0.1,
+          0.15,
+          0.2,
+          0.25,
+          0.3,
+          0.35,
+          0.4,
+          0.45,
+          0.5,
+          0.55,
+          0.6,
+          0.65,
+          0.7,
+          0.75,
+          0.8,
+          0.85,
+          0.9,
+          0.95
+        ],
+        "objective": "macro_f1",
+        "validation_macro_f1": 0.6810465809881812,
+        "tie_break": "closest to 0.5, then higher threshold"
+      },
+      "decision": "not_selected"
+    }
+  ],
+  "selected_plan": {
+    "add_missing_indicators": true,
+    "threshold_policy": "validation_macro_f1",
+    "name": "rule_candidate_1",
+    "numeric_parser": "semantic",
+    "numeric_imputation": "median",
+    "categorical_imputation": "unknown",
+    "outlier_policy": "invalid_to_missing",
+    "deduplicate": true,
+    "class_weight": "none",
+    "reason": "离线规则模拟：根据训练画像选择解析、缺失与去重策略。"
+  },
+  "best_validation": {
+    "macro_f1": 0.6810465809881812,
+    "precision": 0.44984802431610943,
+    "positive_f1": 0.43422982885085576,
+    "minority_recall": 0.41965973534971646,
+    "average_precision": 0.40333852023086586,
+    "balanced_accuracy": 0.6758243566528142,
+    "accuracy": 0.8720415837204158,
+    "confusion_matrix": [
+      [
+        7441,
+        543
+      ],
+      [
+        614,
+        444
+      ]
+    ],
+    "confusion_matrix_labels": [
+      "no",
+      "yes"
+    ],
+    "rows": 9042,
+    "positive_class": "yes",
+    "decision_threshold": 0.2
+  },
+  "best_decision_threshold": 0.2,
+  "best_threshold_selection": {
+    "policy": "validation_macro_f1",
+    "candidates_evaluated": 19,
+    "fit_scope": "validation only",
+    "decision_threshold": 0.2,
+    "positive_prediction_rule": "probability > decision_threshold",
+    "grid": [
+      0.05,
+      0.1,
+      0.15,
+      0.2,
+      0.25,
+      0.3,
+      0.35,
+      0.4,
+      0.45,
+      0.5,
+      0.55,
+      0.6,
+      0.65,
+      0.7,
+      0.75,
+      0.8,
+      0.85,
+      0.9,
+      0.95
+    ],
+    "objective": "macro_f1",
+    "validation_macro_f1": 0.6810465809881812,
+    "tie_break": "closest to 0.5, then higher threshold"
+  },
+  "best_quality_after": {
+    "rows": 27124,
+    "feature_count": 16,
+    "prediction_feature_count": 15,
+    "quality_count_scope": "prediction features only; duration is preserved metadata",
+    "missing_cells": 0,
+    "duplicate_rows": 4,
+    "numeric_parse_errors": 0,
+    "numeric_range_violations": 0,
+    "categorical_format_inconsistencies": 0,
+    "conflicting_label_groups": 0,
+    "label_counts": {
+      "no": 23951,
+      "yes": 3173
+    },
+    "fields": {
+      "age": {
+        "missing": 0,
+        "unique": 75,
+        "kind": "numeric",
+        "strict_parse_errors": 0,
+        "semantic_parse_errors": 0,
+        "invalid_range": 0,
+        "examples_requiring_parse": [],
+        "range": [
+          18.0,
+          95.0
+        ]
+      },
+      "job": {
+        "missing": 0,
+        "unique": 12,
+        "kind": "categorical",
+        "format_inconsistencies": 0,
+        "unknown_semantic_count": 828,
+        "top_values": {
+          "blue-collar": 5710,
+          "management": 5574,
+          "technician": 4446,
+          "admin.": 3002,
+          "services": 2437
+        }
+      },
+      "marital": {
+        "missing": 0,
+        "unique": 4,
+        "kind": "categorical",
+        "format_inconsistencies": 0,
+        "unknown_semantic_count": 704,
+        "top_values": {
+          "married": 15876,
+          "single": 7539,
+          "divorced": 3005,
+          "unknown": 704
+        }
+      },
+      "education": {
+        "missing": 0,
+        "unique": 4,
+        "kind": "categorical",
+        "format_inconsistencies": 0,
+        "unknown_semantic_count": 1701,
+        "top_values": {
+          "secondary": 13608,
+          "tertiary": 7799,
+          "primary": 4016,
+          "unknown": 1701
+        }
+      },
+      "default": {
+        "missing": 0,
+        "unique": 3,
+        "kind": "categorical",
+        "format_inconsistencies": 0,
+        "unknown_semantic_count": 662,
+        "top_values": {
+          "no": 25999,
+          "unknown": 662,
+          "yes": 463
+        }
+      },
+      "balance": {
+        "missing": 0,
+        "unique": 5799,
+        "kind": "numeric",
+        "strict_parse_errors": 0,
+        "semantic_parse_errors": 0,
+        "invalid_range": 0,
+        "examples_requiring_parse": [],
+        "range": [
+          -8019.0,
+          98417.0
+        ]
+      },
+      "housing": {
+        "missing": 0,
+        "unique": 3,
+        "kind": "categorical",
+        "format_inconsistencies": 0,
+        "unknown_semantic_count": 685,
+        "top_values": {
+          "yes": 14665,
+          "no": 11774,
+          "unknown": 685
+        }
+      },
+      "loan": {
+        "missing": 0,
+        "unique": 3,
+        "kind": "categorical",
+        "format_inconsistencies": 0,
+        "unknown_semantic_count": 631,
+        "top_values": {
+          "no": 22234,
+          "yes": 4259,
+          "unknown": 631
+        }
+      },
+      "contact": {
+        "missing": 0,
+        "unique": 3,
+        "kind": "categorical",
+        "format_inconsistencies": 0,
+        "unknown_semantic_count": 8297,
+        "top_values": {
+          "cellular": 17170,
+          "unknown": 8297,
+          "telephone": 1657
+        }
+      },
+      "day": {
+        "missing": 0,
+        "unique": 31,
+        "kind": "numeric",
+        "strict_parse_errors": 0,
+        "semantic_parse_errors": 0,
+        "invalid_range": 0,
+        "examples_requiring_parse": [],
+        "range": [
+          1.0,
+          31.0
+        ]
+      },
+      "month": {
+        "missing": 0,
+        "unique": 13,
+        "kind": "categorical",
+        "format_inconsistencies": 0,
+        "unknown_semantic_count": 684,
+        "top_values": {
+          "may": 8035,
+          "jul": 4006,
+          "aug": 3659,
+          "jun": 3110,
+          "nov": 2330
+        }
+      },
+      "duration": {
+        "missing": 0,
+        "unique": 1383,
+        "kind": "numeric",
+        "strict_parse_errors": 0,
+        "semantic_parse_errors": 0,
+        "invalid_range": 0,
+        "examples_requiring_parse": [],
+        "range": [
+          0.0,
+          3881.0
+        ]
+      },
+      "campaign": {
+        "missing": 0,
+        "unique": 47,
+        "kind": "numeric",
+        "strict_parse_errors": 0,
+        "semantic_parse_errors": 0,
+        "invalid_range": 0,
+        "examples_requiring_parse": [],
+        "range": [
+          1.0,
+          63.0
+        ]
+      },
+      "pdays": {
+        "missing": 0,
+        "unique": 489,
+        "kind": "numeric",
+        "strict_parse_errors": 0,
+        "semantic_parse_errors": 0,
+        "invalid_range": 0,
+        "examples_requiring_parse": [],
+        "range": [
+          -1.0,
+          854.0
+        ]
+      },
+      "previous": {
+        "missing": 0,
+        "unique": 36,
+        "kind": "numeric",
+        "strict_parse_errors": 0,
+        "semantic_parse_errors": 0,
+        "invalid_range": 0,
+        "examples_requiring_parse": [],
+        "range": [
+          0.0,
+          275.0
+        ]
+      },
+      "poutcome": {
+        "missing": 0,
+        "unique": 4,
+        "kind": "categorical",
+        "format_inconsistencies": 0,
+        "unknown_semantic_count": 22258,
+        "top_values": {
+          "unknown": 22258,
+          "failure": 2869,
+          "other": 1110,
+          "success": 887
+        }
+      }
+    },
+    "preserved_fields": {
+      "duration": {
+        "processing": "original values preserved unchanged",
+        "excluded_from_quality_totals": true,
+        "excluded_from_planning_and_prediction": true,
+        "excluded_from_training_deduplication": true
+      }
+    },
+    "duplicate_rule": "Equal prediction inputs and target; identifiers and duration are excluded. Cleaning deduplicates normalized values before outlier replacement and imputation.",
+    "semantics": {
+      "pdays_minus_one": "not previously contacted; valid sentinel",
+      "negative_balance": "valid balance, not automatically an anomaly",
+      "unknown": "a source category, not a missing marker",
+      "duration": "preserved for delivery, excluded from prediction"
+    }
+  },
+  "usage": {
+    "prompt_tokens": null,
+    "completion_tokens": null,
+    "total_tokens": null,
+    "known_response_cost": null,
+    "estimated_cost": null,
+    "token_scope": "successful_responses_only",
+    "currency": null,
+    "retries": 0,
+    "returned_models": [],
+    "cost_note": "费用为配置单价估算；缓存、峰谷和账单差异可能影响实际金额。未配置价格或用量未知时为 null。"
+  },
+  "provider_error": null,
+  "result_note": "离线规则模拟，用于验证流程；真实大模型效果尚未测试。",
+  "artifacts": {
+    "trace": "runs/optimized-20261105/agent/trace.jsonl",
+    "selected_plan": "runs/optimized-20261105/agent/selected_plan.json",
+    "summary": "runs/optimized-20261105/agent/agent_summary.json"
+  }
+}
