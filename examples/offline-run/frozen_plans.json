@@ -1,0 +1,32 @@
+{
+  "minimal": {
+    "name": "minimal",
+    "numeric_parser": "semantic",
+    "numeric_imputation": "mean",
+    "categorical_imputation": "most_frequent",
+    "outlier_policy": "invalid_to_missing",
+    "deduplicate": false,
+    "class_weight": "none",
+    "reason": "Basic format/schema repair with mean/mode filling, without deduplication or class weighting."
+  },
+  "fixed": {
+    "name": "fixed",
+    "numeric_parser": "semantic",
+    "numeric_imputation": "median",
+    "categorical_imputation": "unknown",
+    "outlier_policy": "invalid_to_missing",
+    "deduplicate": true,
+    "class_weight": "balanced",
+    "reason": "Fixed semantic parsing, schema repair, median filling, deduplication and balanced weights."
+  },
+  "agent": {
+    "name": "semantic_repair",
+    "numeric_parser": "semantic",
+    "numeric_imputation": "median",
+    "categorical_imputation": "unknown",
+    "outlier_policy": "invalid_to_missing",
+    "deduplicate": true,
+    "class_weight": "none",
+    "reason": "离线规则模拟：根据工具失败反馈改用语义解析。"
+  }
+}

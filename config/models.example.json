@@ -1,0 +1,34 @@
+{
+  "profiles": {
+    "qwen": {
+      "provider": "qwen",
+      "model": "qwen3.7-plus",
+      "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+      "base_url_env": "QWEN_BASE_URL",
+      "api_key_env": "QWEN_API_KEY",
+      "parameters": {"temperature": 0, "max_tokens": 4096},
+      "extra_body": {"enable_thinking": false},
+      "timeout_seconds": 60,
+      "max_retries": 2,
+      "input_cost_per_million": null,
+      "output_cost_per_million": null,
+      "currency": "CNY",
+      "notes": "北京地域；base_url保留仍可用的旧接口。也支持通过QWEN_BASE_URL配置官方新接口 https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1 。正式实验优先锁定控制台可调用快照，如 qwen3.7-plus-2026-05-26。价格按实际地域、输入档位和运行日期填写；未填写时费用为未知。"
+    },
+    "deepseek": {
+      "provider": "deepseek",
+      "model": "deepseek-flash",
+      "base_url": "https://api.deepseek.com/v1",
+      "base_url_env": "DEEPSEEK_BASE_URL",
+      "api_key_env": "DEEPSEEK_API_KEY",
+      "parameters": {"temperature": 0, "max_tokens": 4096},
+      "extra_body": {"thinking": {"type": "disabled"}},
+      "timeout_seconds": 60,
+      "max_retries": 2,
+      "input_cost_per_million": null,
+      "output_cost_per_million": null,
+      "currency": "USD",
+      "notes": "正式运行记录服务端返回版本；峰谷、缓存和价格变动会影响估算，未配置价格时费用为未知。"
+    }
+  }
+}

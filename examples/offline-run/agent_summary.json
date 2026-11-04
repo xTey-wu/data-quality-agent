@@ -1,0 +1,414 @@
+{
+  "mode": "rule_simulation",
+  "is_real_model": false,
+  "provider": "mock",
+  "model": "rule-simulation-v1",
+  "parameters": {
+    "deterministic": true
+  },
+  "status": "completed",
+  "termination": "model_finished",
+  "real_model_validation": "not_run",
+  "seed": 42,
+  "rounds": 4,
+  "provider_calls": 4,
+  "model_calls": 0,
+  "successful_model_responses": 0,
+  "budgets": {
+    "max_candidates": 4,
+    "max_rounds": 8,
+    "max_tool_actions": 8,
+    "max_http_requests_including_retries": 0,
+    "candidate_attempts": 3,
+    "candidates_evaluated": 3,
+    "tool_calls_received": 3,
+    "tool_actions_processed": 3,
+    "invalid_tool_calls": 0
+  },
+  "candidates": [
+    {
+      "index": 1,
+      "plan": {
+        "name": "strict_baseline",
+        "numeric_parser": "strict",
+        "numeric_imputation": "median",
+        "categorical_imputation": "unknown",
+        "outlier_policy": "invalid_to_missing",
+        "deduplicate": true,
+        "class_weight": "none",
+        "reason": "离线规则模拟：先尝试严格解析以检查格式问题。"
+      },
+      "ok": false,
+      "guardrails": {
+        "passed": false,
+        "reasons": [
+          "ValueError: numeric_parser=strict could not parse values: {'age': {'count': 228, 'examples': ['44 years', '46 years']}, 'balance': {'count': 447, 'examples': ['€424', '€2,476']}, 'day': {'count': 233, 'examples': ['5 days', '6 days']}, 'campaign': {'count': 257, 'examples': ['1 次', '1 次']}, 'pdays': {'count': 241, 'examples': ['-1 days', '-1 days']}, 'previous': {'count': 229, 'examples': ['0 次', '0 次']}}. Use semantic for recognized currency/thousands/unit formats."
+        ]
+      },
+      "validation": null,
+      "error": "ValueError: numeric_parser=strict could not parse values: {'age': {'count': 228, 'examples': ['44 years', '46 years']}, 'balance': {'count': 447, 'examples': ['€424', '€2,476']}, 'day': {'count': 233, 'examples': ['5 days', '6 days']}, 'campaign': {'count': 257, 'examples': ['1 次', '1 次']}, 'pdays': {'count': 241, 'examples': ['-1 days', '-1 days']}, 'previous': {'count': 229, 'examples': ['0 次', '0 次']}}. Use semantic for recognized currency/thousands/unit formats.",
+      "decision": "rejected"
+    },
+    {
+      "index": 2,
+      "plan": {
+        "name": "semantic_repair",
+        "numeric_parser": "semantic",
+        "numeric_imputation": "median",
+        "categorical_imputation": "unknown",
+        "outlier_policy": "invalid_to_missing",
+        "deduplicate": true,
+        "class_weight": "none",
+        "reason": "离线规则模拟：根据工具失败反馈改用语义解析。"
+      },
+      "ok": true,
+      "guardrails": {
+        "passed": true,
+        "reasons": [],
+        "max_legal_clip_fraction": 0.02,
+        "maximum_training_row_removal_fraction": 0.2
+      },
+      "validation": {
+        "macro_f1": 0.614656535546415,
+        "minority_recall": 0.1843100189035917,
+        "average_precision": 0.403300493013109,
+        "balanced_accuracy": 0.5855793581491906,
+        "accuracy": 0.8929440389294404,
+        "confusion_matrix": [
+          [
+            7879,
+            105
+          ],
+          [
+            863,
+            195
+          ]
+        ],
+        "confusion_matrix_labels": [
+          "no",
+          "yes"
+        ],
+        "rows": 9042,
+        "positive_class": "yes"
+      },
+      "error": null,
+      "decision": "selected"
+    },
+    {
+      "index": 3,
+      "plan": {
+        "name": "balanced_iqr_candidate",
+        "numeric_parser": "semantic",
+        "numeric_imputation": "median",
+        "categorical_imputation": "unknown",
+        "outlier_policy": "iqr_clip",
+        "deduplicate": true,
+        "class_weight": "balanced",
+        "reason": "离线规则模拟：比较受控候选，由验证指标与硬约束决定是否保留。"
+      },
+      "ok": false,
+      "guardrails": {
+        "passed": false,
+        "reasons": [
+          "IQR clipping changed more than 2% of legal numeric cells; reject and roll back."
+        ],
+        "max_legal_clip_fraction": 0.02,
+        "maximum_training_row_removal_fraction": 0.2
+      },
+      "validation": null,
+      "error": "IQR clipping changed more than 2% of legal numeric cells; reject and roll back.",
+      "decision": "rejected"
+    }
+  ],
+  "selected_plan": {
+    "name": "semantic_repair",
+    "numeric_parser": "semantic",
+    "numeric_imputation": "median",
+    "categorical_imputation": "unknown",
+    "outlier_policy": "invalid_to_missing",
+    "deduplicate": true,
+    "class_weight": "none",
+    "reason": "离线规则模拟：根据工具失败反馈改用语义解析。"
+  },
+  "best_validation": {
+    "macro_f1": 0.614656535546415,
+    "minority_recall": 0.1843100189035917,
+    "average_precision": 0.403300493013109,
+    "balanced_accuracy": 0.5855793581491906,
+    "accuracy": 0.8929440389294404,
+    "confusion_matrix": [
+      [
+        7879,
+        105
+      ],
+      [
+        863,
+        195
+      ]
+    ],
+    "confusion_matrix_labels": [
+      "no",
+      "yes"
+    ],
+    "rows": 9042,
+    "positive_class": "yes"
+  },
+  "best_quality_after": {
+    "rows": 27124,
+    "feature_count": 16,
+    "prediction_feature_count": 15,
+    "quality_count_scope": "prediction features only; duration is preserved metadata",
+    "missing_cells": 0,
+    "duplicate_rows": 4,
+    "numeric_parse_errors": 0,
+    "numeric_range_violations": 0,
+    "categorical_format_inconsistencies": 0,
+    "conflicting_label_groups": 0,
+    "label_counts": {
+      "no": 23951,
+      "yes": 3173
+    },
+    "fields": {
+      "age": {
+        "missing": 0,
+        "unique": 75,
+        "kind": "numeric",
+        "strict_parse_errors": 0,
+        "semantic_parse_errors": 0,
+        "invalid_range": 0,
+        "examples_requiring_parse": [],
+        "range": [
+          18.0,
+          95.0
+        ]
+      },
+      "job": {
+        "missing": 0,
+        "unique": 12,
+        "kind": "categorical",
+        "format_inconsistencies": 0,
+        "unknown_semantic_count": 828,
+        "top_values": {
+          "blue-collar": 5710,
+          "management": 5574,
+          "technician": 4446,
+          "admin.": 3002,
+          "services": 2437
+        }
+      },
+      "marital": {
+        "missing": 0,
+        "unique": 4,
+        "kind": "categorical",
+        "format_inconsistencies": 0,
+        "unknown_semantic_count": 704,
+        "top_values": {
+          "married": 15876,
+          "single": 7539,
+          "divorced": 3005,
+          "unknown": 704
+        }
+      },
+      "education": {
+        "missing": 0,
+        "unique": 4,
+        "kind": "categorical",
+        "format_inconsistencies": 0,
+        "unknown_semantic_count": 1701,
+        "top_values": {
+          "secondary": 13608,
+          "tertiary": 7799,
+          "primary": 4016,
+          "unknown": 1701
+        }
+      },
+      "default": {
+        "missing": 0,
+        "unique": 3,
+        "kind": "categorical",
+        "format_inconsistencies": 0,
+        "unknown_semantic_count": 662,
+        "top_values": {
+          "no": 25999,
+          "unknown": 662,
+          "yes": 463
+        }
+      },
+      "balance": {
+        "missing": 0,
+        "unique": 5799,
+        "kind": "numeric",
+        "strict_parse_errors": 0,
+        "semantic_parse_errors": 0,
+        "invalid_range": 0,
+        "examples_requiring_parse": [],
+        "range": [
+          -8019.0,
+          98417.0
+        ]
+      },
+      "housing": {
+        "missing": 0,
+        "unique": 3,
+        "kind": "categorical",
+        "format_inconsistencies": 0,
+        "unknown_semantic_count": 685,
+        "top_values": {
+          "yes": 14665,
+          "no": 11774,
+          "unknown": 685
+        }
+      },
+      "loan": {
+        "missing": 0,
+        "unique": 3,
+        "kind": "categorical",
+        "format_inconsistencies": 0,
+        "unknown_semantic_count": 631,
+        "top_values": {
+          "no": 22234,
+          "yes": 4259,
+          "unknown": 631
+        }
+      },
+      "contact": {
+        "missing": 0,
+        "unique": 3,
+        "kind": "categorical",
+        "format_inconsistencies": 0,
+        "unknown_semantic_count": 8297,
+        "top_values": {
+          "cellular": 17170,
+          "unknown": 8297,
+          "telephone": 1657
+        }
+      },
+      "day": {
+        "missing": 0,
+        "unique": 31,
+        "kind": "numeric",
+        "strict_parse_errors": 0,
+        "semantic_parse_errors": 0,
+        "invalid_range": 0,
+        "examples_requiring_parse": [],
+        "range": [
+          1.0,
+          31.0
+        ]
+      },
+      "month": {
+        "missing": 0,
+        "unique": 13,
+        "kind": "categorical",
+        "format_inconsistencies": 0,
+        "unknown_semantic_count": 684,
+        "top_values": {
+          "may": 8035,
+          "jul": 4006,
+          "aug": 3659,
+          "jun": 3110,
+          "nov": 2330
+        }
+      },
+      "duration": {
+        "missing": 0,
+        "unique": 1383,
+        "kind": "numeric",
+        "strict_parse_errors": 0,
+        "semantic_parse_errors": 0,
+        "invalid_range": 0,
+        "examples_requiring_parse": [],
+        "range": [
+          0.0,
+          3881.0
+        ]
+      },
+      "campaign": {
+        "missing": 0,
+        "unique": 47,
+        "kind": "numeric",
+        "strict_parse_errors": 0,
+        "semantic_parse_errors": 0,
+        "invalid_range": 0,
+        "examples_requiring_parse": [],
+        "range": [
+          1.0,
+          63.0
+        ]
+      },
+      "pdays": {
+        "missing": 0,
+        "unique": 489,
+        "kind": "numeric",
+        "strict_parse_errors": 0,
+        "semantic_parse_errors": 0,
+        "invalid_range": 0,
+        "examples_requiring_parse": [],
+        "range": [
+          -1.0,
+          854.0
+        ]
+      },
+      "previous": {
+        "missing": 0,
+        "unique": 36,
+        "kind": "numeric",
+        "strict_parse_errors": 0,
+        "semantic_parse_errors": 0,
+        "invalid_range": 0,
+        "examples_requiring_parse": [],
+        "range": [
+          0.0,
+          275.0
+        ]
+      },
+      "poutcome": {
+        "missing": 0,
+        "unique": 4,
+        "kind": "categorical",
+        "format_inconsistencies": 0,
+        "unknown_semantic_count": 22258,
+        "top_values": {
+          "unknown": 22258,
+          "failure": 2869,
+          "other": 1110,
+          "success": 887
+        }
+      }
+    },
+    "preserved_fields": {
+      "duration": {
+        "processing": "original values preserved unchanged",
+        "excluded_from_quality_totals": true,
+        "excluded_from_planning_and_prediction": true,
+        "excluded_from_training_deduplication": true
+      }
+    },
+    "duplicate_rule": "Equal prediction inputs and target; identifiers and duration are excluded. Cleaning deduplicates normalized values before outlier replacement and imputation.",
+    "semantics": {
+      "pdays_minus_one": "not previously contacted; valid sentinel",
+      "negative_balance": "valid balance, not automatically an anomaly",
+      "unknown": "a source category, not a missing marker",
+      "duration": "preserved for delivery, excluded from prediction"
+    }
+  },
+  "usage": {
+    "prompt_tokens": null,
+    "completion_tokens": null,
+    "total_tokens": null,
+    "known_response_cost": null,
+    "estimated_cost": null,
+    "token_scope": "successful_responses_only",
+    "currency": null,
+    "retries": 0,
+    "returned_models": [],
+    "cost_note": "费用为配置单价估算；缓存、峰谷和账单差异可能影响实际金额。未配置价格或用量未知时为 null。"
+  },
+  "provider_error": null,
+  "result_note": "离线规则模拟，用于验证流程；真实大模型效果尚未测试。",
+  "artifacts": {
+    "trace": "runs/offline-demo/agent/trace.jsonl",
+    "selected_plan": "runs/offline-demo/agent/selected_plan.json",
+    "summary": "runs/offline-demo/agent/agent_summary.json"
+  }
+}

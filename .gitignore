@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+.pytest_cache/
+*.egg-info/
+.DS_Store
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+config/models.local.json
+runs/
+data/raw/*.csv
+data/prepared*/
+work/
+*.joblib

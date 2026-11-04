@@ -1,0 +1,9 @@
+{
+  "source_url": "https://archive.ics.uci.edu/ml/machine-learning-databases/00222/bank.zip",
+  "archive_sha256": "99d7e8eb12401ed278b793984423915411ea8df099e1795f9fefe254f513fe5e",
+  "csv_sha256": "d1513ec63b385506f7cfce9f2c5caa9fe99e7ba4e8c3fa264b3aaf0f849ed32d",
+  "license": "CC BY 4.0 (UCI dataset page)",
+  "dataset_page": "https://archive.ics.uci.edu/dataset/222/bank+marketing",
+  "downloaded_at": "2026-11-04",
+  "citation": "Moro, S., Cortez, P., & Rita, P. Bank Marketing. UCI Machine Learning Repository. DOI:10.24432/C5K306"
+}

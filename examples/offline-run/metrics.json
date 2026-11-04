@@ -1,0 +1,2218 @@
+{
+  "schema_version": 1,
+  "generated_at_utc": "2026-11-04T08:52:23.093148+00:00",
+  "seed": 42,
+  "execution": {
+    "mode": "mock",
+    "is_real_model": false,
+    "real_model_status": "not_run"
+  },
+  "dataset": {
+    "dataset": "UCI Bank Marketing, bank-full.csv",
+    "source_url": "https://archive.ics.uci.edu/static/public/222/bank+marketing.zip",
+    "source_sha256": "d1513ec63b385506f7cfce9f2c5caa9fe99e7ba4e8c3fa264b3aaf0f849ed32d",
+    "seed": 42,
+    "source_rows": 45211,
+    "source_features": 16,
+    "split": {
+      "train_reference": 27126,
+      "train_dirty": 27397,
+      "validation": 9042,
+      "test": 9043
+    },
+    "group_columns": [
+      "age",
+      "job",
+      "marital",
+      "education",
+      "default",
+      "balance",
+      "housing",
+      "loan",
+      "contact",
+      "day",
+      "month",
+      "campaign",
+      "pdays",
+      "previous",
+      "poutcome"
+    ],
+    "split_protocol": "60/20/20 group-stratified IID benchmark; identical prediction inputs stay together. No reliable customer identifier exists, so this is not customer-entity isolation.",
+    "excluded_prediction_columns": [
+      "duration",
+      "_row_id",
+      "y"
+    ],
+    "preserved_fields": {
+      "duration": "Original values retained; excluded from parsing, fitted statistics, clipping, imputation, planning, quality guardrails and training duplicate comparison."
+    },
+    "training_deduplication_rule": "If enabled: merge normalized identical modeling inputs with identical labels before outlier replacement and imputation. This is not customer-entity deduplication; independent source records can be merged. Report reference_rows_retained/reference_rows_removed.",
+    "pollution_scope": "training only; validation and test are unmodified source holdouts",
+    "source_is_verified_ground_truth": false,
+    "corruptions": {
+      "missing": 10172,
+      "outlier": 1085,
+      "numeric_format": 1628,
+      "categorical_format": 1628
+    },
+    "injected_duplicates": 271
+  },
+  "environment": {
+    "python": "3.12.4",
+    "pandas": "3.1.0",
+    "scikit-learn": "1.9.1",
+    "numpy": "2.5.4"
+  },
+  "input_sha256": {
+    "train_dirty.csv": "12d82085a6a5c332bba767e490bcedfc3be85eaa77e62a9addb416a81ea645f6",
+    "validation.csv": "618558f05cd8690672a1400918ee6cf00edcade3bb3c44f8339230ba84a3d143",
+    "test.csv": "3613057ab23a66e099549a8ab07058c09cd500ae4c388596cfb60fb96b2864bc",
+    "metadata.json": "e3ea2ca6557f1778bb9272951c2590823239a6f46ef42d1744ac9029eca38ba9"
+  },
+  "quality_before": {
+    "rows": 27397,
+    "feature_count": 16,
+    "prediction_feature_count": 15,
+    "quality_count_scope": "prediction features only; duration is preserved metadata",
+    "missing_cells": 10277,
+    "duplicate_rows": 273,
+    "numeric_parse_errors": 1635,
+    "numeric_range_violations": 1095,
+    "categorical_format_inconsistencies": 1638,
+    "conflicting_label_groups": 0,
+    "label_counts": {
+      "no": 24192,
+      "yes": 3205
+    },
+    "fields": {
+      "age": {
+        "missing": 739,
+        "unique": 124,
+        "kind": "numeric",
+        "strict_parse_errors": 228,
+        "semantic_parse_errors": 0,
+        "invalid_range": 227,
+        "examples_requiring_parse": [
+          "44 years",
+          "46 years",
+          "37 years"
+        ],
+        "range": [
+          18.0,
+          95.0
+        ]
+      },
+      "job": {
+        "missing": 672,
+        "unique": 25,
+        "kind": "categorical",
+        "format_inconsistencies": 168,
+        "unknown_semantic_count": 163,
+        "top_values": {
+          "blue-collar": 5767,
+          "management": 5640,
+          "technician": 4493,
+          "admin.": 3033,
+          "services": 2451
+        }
+      },
+      "marital": {
+        "missing": 714,
+        "unique": 7,
+        "kind": "categorical",
+        "format_inconsistencies": 161,
+        "unknown_semantic_count": 0,
+        "top_values": {
+          "married": 16029,
+          "single": 7628,
+          "divorced": 3026,
+          "": 714
+        }
+      },
+      "education": {
+        "missing": 635,
+        "unique": 9,
+        "kind": "categorical",
+        "format_inconsistencies": 176,
+        "unknown_semantic_count": 1080,
+        "top_values": {
+          "secondary": 13733,
+          "tertiary": 7891,
+          "primary": 4058,
+          "unknown": 1080,
+          "": 635
+        }
+      },
+      "default": {
+        "missing": 672,
+        "unique": 5,
+        "kind": "categorical",
+        "format_inconsistencies": 166,
+        "unknown_semantic_count": 0,
+        "top_values": {
+          "no": 26258,
+          "": 672,
+          "yes": 467
+        }
+      },
+      "balance": {
+        "missing": 723,
+        "unique": 6128,
+        "kind": "numeric",
+        "strict_parse_errors": 447,
+        "semantic_parse_errors": 0,
+        "invalid_range": 0,
+        "examples_requiring_parse": [
+          "€424",
+          "€2,476",
+          "€4,080"
+        ],
+        "range": [
+          -8019.0,
+          98417.0
+        ]
+      },
+      "housing": {
+        "missing": 692,
+        "unique": 5,
+        "kind": "categorical",
+        "format_inconsistencies": 173,
+        "unknown_semantic_count": 0,
+        "top_values": {
+          "yes": 14821,
+          "no": 11884,
+          "": 692
+        }
+      },
+      "loan": {
+        "missing": 639,
+        "unique": 5,
+        "kind": "categorical",
+        "format_inconsistencies": 195,
+        "unknown_semantic_count": 0,
+        "top_values": {
+          "no": 22467,
+          "yes": 4291,
+          "": 639
+        }
+      },
+      "contact": {
+        "missing": 699,
+        "unique": 7,
+        "kind": "categorical",
+        "format_inconsistencies": 207,
+        "unknown_semantic_count": 7688,
+        "top_values": {
+          "cellular": 17340,
+          "unknown": 7688,
+          "telephone": 1670,
+          "": 699
+        }
+      },
+      "day": {
+        "missing": 708,
+        "unique": 64,
+        "kind": "numeric",
+        "strict_parse_errors": 233,
+        "semantic_parse_errors": 0,
+        "invalid_range": 222,
+        "examples_requiring_parse": [
+          "5 days",
+          "6 days",
+          "6 days"
+        ],
+        "range": [
+          1.0,
+          31.0
+        ]
+      },
+      "month": {
+        "missing": 690,
+        "unique": 24,
+        "kind": "categorical",
+        "format_inconsistencies": 188,
+        "unknown_semantic_count": 0,
+        "top_values": {
+          "may": 8112,
+          "jul": 4051,
+          "aug": 3696,
+          "jun": 3142,
+          "nov": 2348
+        }
+      },
+      "duration": {
+        "missing": 0,
+        "unique": 1383,
+        "kind": "numeric",
+        "strict_parse_errors": 0,
+        "semantic_parse_errors": 0,
+        "invalid_range": 0,
+        "examples_requiring_parse": [],
+        "range": [
+          0.0,
+          3881.0
+        ]
+      },
+      "campaign": {
+        "missing": 653,
+        "unique": 65,
+        "kind": "numeric",
+        "strict_parse_errors": 257,
+        "semantic_parse_errors": 0,
+        "invalid_range": 236,
+        "examples_requiring_parse": [
+          "1 次",
+          "1 次",
+          "1 次"
+        ],
+        "range": [
+          1.0,
+          63.0
+        ]
+      },
+      "pdays": {
+        "missing": 695,
+        "unique": 520,
+        "kind": "numeric",
+        "strict_parse_errors": 241,
+        "semantic_parse_errors": 0,
+        "invalid_range": 182,
+        "examples_requiring_parse": [
+          "-1 days",
+          "-1 days",
+          "-1 days"
+        ],
+        "range": [
+          -1.0,
+          854.0
+        ]
+      },
+      "previous": {
+        "missing": 681,
+        "unique": 52,
+        "kind": "numeric",
+        "strict_parse_errors": 229,
+        "semantic_parse_errors": 0,
+        "invalid_range": 228,
+        "examples_requiring_parse": [
+          "0 次",
+          "0 次",
+          "0 次"
+        ],
+        "range": [
+          0.0,
+          275.0
+        ]
+      },
+      "poutcome": {
+        "missing": 665,
+        "unique": 9,
+        "kind": "categorical",
+        "format_inconsistencies": 204,
+        "unknown_semantic_count": 21824,
+        "top_values": {
+          "unknown": 21824,
+          "failure": 2899,
+          "other": 1117,
+          "success": 892,
+          "": 665
+        }
+      }
+    },
+    "preserved_fields": {
+      "duration": {
+        "processing": "original values preserved unchanged",
+        "excluded_from_quality_totals": true,
+        "excluded_from_planning_and_prediction": true,
+        "excluded_from_training_deduplication": true
+      }
+    },
+    "duplicate_rule": "Equal prediction inputs and target; identifiers and duration are excluded. Cleaning deduplicates normalized values before outlier replacement and imputation.",
+    "semantics": {
+      "pdays_minus_one": "not previously contacted; valid sentinel",
+      "negative_balance": "valid balance, not automatically an anomaly",
+      "unknown": "a source category, not a missing marker",
+      "duration": "preserved for delivery, excluded from prediction"
+    }
+  },
+  "results": [
+    {
+      "id": "minimal",
+      "label": "最低必要预处理",
+      "ok": true,
+      "plan": {
+        "name": "minimal",
+        "numeric_parser": "semantic",
+        "numeric_imputation": "mean",
+        "categorical_imputation": "most_frequent",
+        "outlier_policy": "invalid_to_missing",
+        "deduplicate": false,
+        "class_weight": "none",
+        "reason": "Basic format/schema repair with mean/mode filling, without deduplication or class weighting."
+      },
+      "validation": {
+        "macro_f1": 0.611080389601194,
+        "minority_recall": 0.17958412098298676,
+        "average_precision": 0.4035005366438792,
+        "balanced_accuracy": 0.5830911586878862,
+        "accuracy": 0.8921698739216988,
+        "confusion_matrix": [
+          [
+            7877,
+            107
+          ],
+          [
+            868,
+            190
+          ]
+        ],
+        "confusion_matrix_labels": [
+          "no",
+          "yes"
+        ],
+        "rows": 9042,
+        "positive_class": "yes"
+      },
+      "test": {
+        "macro_f1": 0.6102645155805504,
+        "minority_recall": 0.18052930056710775,
+        "average_precision": 0.3912280304700584,
+        "balanced_accuracy": 0.5828757961821137,
+        "accuracy": 0.8910759703638174,
+        "confusion_matrix": [
+          [
+            7867,
+            118
+          ],
+          [
+            867,
+            191
+          ]
+        ],
+        "confusion_matrix_labels": [
+          "no",
+          "yes"
+        ],
+        "rows": 9043,
+        "positive_class": "yes"
+      },
+      "quality_after": {
+        "rows": 27397,
+        "feature_count": 16,
+        "prediction_feature_count": 15,
+        "quality_count_scope": "prediction features only; duration is preserved metadata",
+        "missing_cells": 0,
+        "duplicate_rows": 274,
+        "numeric_parse_errors": 0,
+        "numeric_range_violations": 0,
+        "categorical_format_inconsistencies": 0,
+        "conflicting_label_groups": 0,
+        "label_counts": {
+          "no": 24192,
+          "yes": 3205
+        },
+        "fields": {
+          "age": {
+            "missing": 0,
+            "unique": 76,
+            "kind": "numeric",
+            "strict_parse_errors": 0,
+            "semantic_parse_errors": 0,
+            "invalid_range": 0,
+            "examples_requiring_parse": [],
+            "range": [
+              18.0,
+              95.0
+            ]
+          },
+          "job": {
+            "missing": 0,
+            "unique": 12,
+            "kind": "categorical",
+            "format_inconsistencies": 0,
+            "unknown_semantic_count": 163,
+            "top_values": {
+              "blue-collar": 6439,
+              "management": 5640,
+              "technician": 4493,
+              "admin.": 3033,
+              "services": 2451
+            }
+          },
+          "marital": {
+            "missing": 0,
+            "unique": 3,
+            "kind": "categorical",
+            "format_inconsistencies": 0,
+            "unknown_semantic_count": 0,
+            "top_values": {
+              "married": 16743,
+              "single": 7628,
+              "divorced": 3026
+            }
+          },
+          "education": {
+            "missing": 0,
+            "unique": 4,
+            "kind": "categorical",
+            "format_inconsistencies": 0,
+            "unknown_semantic_count": 1080,
+            "top_values": {
+              "secondary": 14368,
+              "tertiary": 7891,
+              "primary": 4058,
+              "unknown": 1080
+            }
+          },
+          "default": {
+            "missing": 0,
+            "unique": 2,
+            "kind": "categorical",
+            "format_inconsistencies": 0,
+            "unknown_semantic_count": 0,
+            "top_values": {
+              "no": 26930,
+              "yes": 467
+            }
+          },
+          "balance": {
+            "missing": 0,
+            "unique": 5800,
+            "kind": "numeric",
+            "strict_parse_errors": 0,
+            "semantic_parse_errors": 0,
+            "invalid_range": 0,
+            "examples_requiring_parse": [],
+            "range": [
+              -8019.0,
+              98417.0
+            ]
+          },
+          "housing": {
+            "missing": 0,
+            "unique": 2,
+            "kind": "categorical",
+            "format_inconsistencies": 0,
+            "unknown_semantic_count": 0,
+            "top_values": {
+              "yes": 15513,
+              "no": 11884
+            }
+          },
+          "loan": {
+            "missing": 0,
+            "unique": 2,
+            "kind": "categorical",
+            "format_inconsistencies": 0,
+            "unknown_semantic_count": 0,
+            "top_values": {
+              "no": 23106,
+              "yes": 4291
+            }
+          },
+          "contact": {
+            "missing": 0,
+            "unique": 3,
+            "kind": "categorical",
+            "format_inconsistencies": 0,
+            "unknown_semantic_count": 7688,
+            "top_values": {
+              "cellular": 18039,
+              "unknown": 7688,
+              "telephone": 1670
+            }
+          },
+          "day": {
+            "missing": 0,
+            "unique": 32,
+            "kind": "numeric",
+            "strict_parse_errors": 0,
+            "semantic_parse_errors": 0,
+            "invalid_range": 0,
+            "examples_requiring_parse": [],
+            "range": [
+              1.0,
+              31.0
+            ]
+          },
+          "month": {
+            "missing": 0,
+            "unique": 12,
+            "kind": "categorical",
+            "format_inconsistencies": 0,
+            "unknown_semantic_count": 0,
+            "top_values": {
+              "may": 8802,
+              "jul": 4051,
+              "aug": 3696,
+              "jun": 3142,
+              "nov": 2348
+            }
+          },
+          "duration": {
+            "missing": 0,
+            "unique": 1383,
+            "kind": "numeric",
+            "strict_parse_errors": 0,
+            "semantic_parse_errors": 0,
+            "invalid_range": 0,
+            "examples_requiring_parse": [],
+            "range": [
+              0.0,
+              3881.0
+            ]
+          },
+          "campaign": {
+            "missing": 0,
+            "unique": 48,
+            "kind": "numeric",
+            "strict_parse_errors": 0,
+            "semantic_parse_errors": 0,
+            "invalid_range": 0,
+            "examples_requiring_parse": [],
+            "range": [
+              1.0,
+              63.0
+            ]
+          },
+          "pdays": {
+            "missing": 0,
+            "unique": 490,
+            "kind": "numeric",
+            "strict_parse_errors": 0,
+            "semantic_parse_errors": 0,
+            "invalid_range": 0,
+            "examples_requiring_parse": [],
+            "range": [
+              -1.0,
+              854.0
+            ]
+          },
+          "previous": {
+            "missing": 0,
+            "unique": 37,
+            "kind": "numeric",
+            "strict_parse_errors": 0,
+            "semantic_parse_errors": 0,
+            "invalid_range": 0,
+            "examples_requiring_parse": [],
+            "range": [
+              0.0,
+              275.0
+            ]
+          },
+          "poutcome": {
+            "missing": 0,
+            "unique": 4,
+            "kind": "categorical",
+            "format_inconsistencies": 0,
+            "unknown_semantic_count": 22489,
+            "top_values": {
+              "unknown": 22489,
+              "failure": 2899,
+              "other": 1117,
+              "success": 892
+            }
+          }
+        },
+        "preserved_fields": {
+          "duration": {
+            "processing": "original values preserved unchanged",
+            "excluded_from_quality_totals": true,
+            "excluded_from_planning_and_prediction": true,
+            "excluded_from_training_deduplication": true
+          }
+        },
+        "duplicate_rule": "Equal prediction inputs and target; identifiers and duration are excluded. Cleaning deduplicates normalized values before outlier replacement and imputation.",
+        "semantics": {
+          "pdays_minus_one": "not previously contacted; valid sentinel",
+          "negative_balance": "valid balance, not automatically an anomaly",
+          "unknown": "a source category, not a missing marker",
+          "duration": "preserved for delivery, excluded from prediction"
+        }
+      },
+      "guardrails": {
+        "passed": true,
+        "reasons": [],
+        "max_legal_clip_fraction": 0.02,
+        "maximum_training_row_removal_fraction": 0.2
+      },
+      "changes": {
+        "invalid_to_missing": 1095,
+        "clipped_legal_cells": 0,
+        "legal_numeric_cells": 159088,
+        "clipped_by_field": {},
+        "clipped_legal_fraction": 0.0,
+        "numeric_missing_filled": 5294,
+        "categorical_missing_filled": 6078,
+        "duplicates_removed": 0,
+        "rows_before": 27397,
+        "rows_after": 27397
+      },
+      "artifacts": {
+        "train_processed": "runs/offline-demo/minimal/artifacts/train_processed.csv",
+        "validation_processed": "runs/offline-demo/minimal/artifacts/validation_processed.csv",
+        "test_processed": "runs/offline-demo/minimal/artifacts/test_processed.csv",
+        "preprocessing": "runs/offline-demo/minimal/artifacts/preprocessing.json",
+        "model": "runs/offline-demo/minimal/artifacts/model.joblib",
+        "test_metrics": "runs/offline-demo/minimal/artifacts/test_metrics.json"
+      },
+      "final_fit_eval_seconds": 3.851,
+      "repair_evaluation": {
+        "cell_repairs": {
+          "missing": {
+            "injected": 10172,
+            "retained_evaluable": 10172,
+            "exactly_restored": 3622,
+            "nonmissing_after": 10172,
+            "schema_valid_after": 4158,
+            "numeric_retained_evaluable": 4158,
+            "exact_restoration_rate": 0.35607550137632715,
+            "filled_rate": 1.0,
+            "schema_valid_rate_after": 1.0,
+            "numeric_reconstruction_mae_by_field": {
+              "age": {
+                "mae": 8.521640114373792,
+                "n": 730,
+                "unit": "years"
+              },
+              "balance": {
+                "mae": 1447.1382997804951,
+                "n": 719,
+                "unit": "EUR"
+              },
+              "previous": {
+                "mae": 1.0364870221324827,
+                "n": 677,
+                "unit": "contacts"
+              },
+              "day": {
+                "mae": 7.0827551913730735,
+                "n": 703,
+                "unit": "day_of_month"
+              },
+              "campaign": {
+                "mae": 1.7364265278875872,
+                "n": 643,
+                "unit": "contacts"
+              },
+              "pdays": {
+                "mae": 71.64631478965212,
+                "n": 686,
+                "unit": "days"
+              }
+            },
+            "categorical_reconstruction_accuracy": 0.6022613900897905
+          },
+          "outlier": {
+            "injected": 1085,
+            "retained_evaluable": 1085,
+            "exactly_restored": 0,
+            "nonmissing_after": 1085,
+            "schema_valid_after": 1085,
+            "numeric_retained_evaluable": 1085,
+            "exact_restoration_rate": 0.0,
+            "filled_rate": 1.0,
+            "schema_valid_rate_after": 1.0,
+            "numeric_reconstruction_mae_by_field": {
+              "pdays": {
+                "mae": 61.04064835879103,
+                "n": 181,
+                "unit": "days"
+              },
+              "day": {
+                "mae": 7.261021118598479,
+                "n": 222,
+                "unit": "day_of_month"
+              },
+              "previous": {
+                "mae": 0.7361124534380348,
+                "n": 225,
+                "unit": "contacts"
+              },
+              "age": {
+                "mae": 8.98531638308912,
+                "n": 224,
+                "unit": "years"
+              },
+              "campaign": {
+                "mae": 2.1221968135297726,
+                "n": 233,
+                "unit": "contacts"
+              }
+            },
+            "categorical_reconstruction_accuracy": null
+          },
+          "numeric_format": {
+            "injected": 1628,
+            "retained_evaluable": 1628,
+            "exactly_restored": 1628,
+            "nonmissing_after": 1628,
+            "schema_valid_after": 1628,
+            "numeric_retained_evaluable": 1628,
+            "exact_restoration_rate": 1.0,
+            "filled_rate": 1.0,
+            "schema_valid_rate_after": 1.0,
+            "numeric_reconstruction_mae_by_field": {
+              "balance": {
+                "mae": 0.0,
+                "n": 444,
+                "unit": "EUR"
+              },
+              "previous": {
+                "mae": 0.0,
+                "n": 228,
+                "unit": "contacts"
+              },
+              "campaign": {
+                "mae": 0.0,
+                "n": 255,
+                "unit": "contacts"
+              },
+              "day": {
+                "mae": 0.0,
+                "n": 233,
+                "unit": "day_of_month"
+              },
+              "pdays": {
+                "mae": 0.0,
+                "n": 241,
+                "unit": "days"
+              },
+              "age": {
+                "mae": 0.0,
+                "n": 227,
+                "unit": "years"
+              }
+            },
+            "categorical_reconstruction_accuracy": null
+          },
+          "categorical_format": {
+            "injected": 1628,
+            "retained_evaluable": 1628,
+            "exactly_restored": 1628,
+            "nonmissing_after": 1628,
+            "schema_valid_after": 0,
+            "numeric_retained_evaluable": 0,
+            "exact_restoration_rate": 1.0,
+            "filled_rate": 1.0,
+            "schema_valid_rate_after": null,
+            "numeric_reconstruction_mae_by_field": {},
+            "categorical_reconstruction_accuracy": 1.0
+          }
+        },
+        "duplicates": {
+          "injected": 271,
+          "removed": 0,
+          "removal_recall": 0.0,
+          "original_rows_retained": 271
+        },
+        "reference_rows_retained": 27126,
+        "reference_rows_removed": 0,
+        "reference_rows": 27126,
+        "dirty_rows": 27397,
+        "untouched_cells": {
+          "retained_evaluable": 392377,
+          "changed": 0,
+          "unintended_change_rate": 0.0,
+          "scope": "Uncorrupted, retained source cells in the 15 prediction features only; duration, target and identifiers are excluded. Source-missing or schema-invalid numeric values are excluded from the denominator."
+        },
+        "note": "Exact restoration is meaningful for reversible formatting. Imputation is an estimate, so missing/outlier reconstruction is reported separately; source data is not absolute ground truth. Source rows removed by equal-input/equal-label merging may represent independent customers; report reference row retention as its cost."
+      }
+    },
+    {
+      "id": "fixed",
+      "label": "固定清洗流程",
+      "ok": true,
+      "plan": {
+        "name": "fixed",
+        "numeric_parser": "semantic",
+        "numeric_imputation": "median",
+        "categorical_imputation": "unknown",
+        "outlier_policy": "invalid_to_missing",
+        "deduplicate": true,
+        "class_weight": "balanced",
+        "reason": "Fixed semantic parsing, schema repair, median filling, deduplication and balanced weights."
+      },
+      "validation": {
+        "macro_f1": 0.6142567239632702,
+        "minority_recall": 0.6162570888468809,
+        "average_precision": 0.4011698567130413,
+        "balanced_accuracy": 0.6982212297941819,
+        "accuracy": 0.761004202610042,
+        "confusion_matrix": [
+          [
+            6229,
+            1755
+          ],
+          [
+            406,
+            652
+          ]
+        ],
+        "confusion_matrix_labels": [
+          "no",
+          "yes"
+        ],
+        "rows": 9042,
+        "positive_class": "yes"
+      },
+      "test": {
+        "macro_f1": 0.6134258701099924,
+        "minority_recall": 0.6162570888468809,
+        "average_precision": 0.38718981841350886,
+        "balanced_accuracy": 0.6976714373476733,
+        "accuracy": 0.7600353864867854,
+        "confusion_matrix": [
+          [
+            6221,
+            1764
+          ],
+          [
+            406,
+            652
+          ]
+        ],
+        "confusion_matrix_labels": [
+          "no",
+          "yes"
+        ],
+        "rows": 9043,
+        "positive_class": "yes"
+      },
+      "quality_after": {
+        "rows": 27124,
+        "feature_count": 16,
+        "prediction_feature_count": 15,
+        "quality_count_scope": "prediction features only; duration is preserved metadata",
+        "missing_cells": 0,
+        "duplicate_rows": 4,
+        "numeric_parse_errors": 0,
+        "numeric_range_violations": 0,
+        "categorical_format_inconsistencies": 0,
+        "conflicting_label_groups": 0,
+        "label_counts": {
+          "no": 23951,
+          "yes": 3173
+        },
+        "fields": {
+          "age": {
+            "missing": 0,
+            "unique": 75,
+            "kind": "numeric",
+            "strict_parse_errors": 0,
+            "semantic_parse_errors": 0,
+            "invalid_range": 0,
+            "examples_requiring_parse": [],
+            "range": [
+              18.0,
+              95.0
+            ]
+          },
+          "job": {
+            "missing": 0,
+            "unique": 12,
+            "kind": "categorical",
+            "format_inconsistencies": 0,
+            "unknown_semantic_count": 828,
+            "top_values": {
+              "blue-collar": 5710,
+              "management": 5574,
+              "technician": 4446,
+              "admin.": 3002,
+              "services": 2437
+            }
+          },
+          "marital": {
+            "missing": 0,
+            "unique": 4,
+            "kind": "categorical",
+            "format_inconsistencies": 0,
+            "unknown_semantic_count": 704,
+            "top_values": {
+              "married": 15876,
+              "single": 7539,
+              "divorced": 3005,
+              "unknown": 704
+            }
+          },
+          "education": {
+            "missing": 0,
+            "unique": 4,
+            "kind": "categorical",
+            "format_inconsistencies": 0,
+            "unknown_semantic_count": 1701,
+            "top_values": {
+              "secondary": 13608,
+              "tertiary": 7799,
+              "primary": 4016,
+              "unknown": 1701
+            }
+          },
+          "default": {
+            "missing": 0,
+            "unique": 3,
+            "kind": "categorical",
+            "format_inconsistencies": 0,
+            "unknown_semantic_count": 662,
+            "top_values": {
+              "no": 25999,
+              "unknown": 662,
+              "yes": 463
+            }
+          },
+          "balance": {
+            "missing": 0,
+            "unique": 5799,
+            "kind": "numeric",
+            "strict_parse_errors": 0,
+            "semantic_parse_errors": 0,
+            "invalid_range": 0,
+            "examples_requiring_parse": [],
+            "range": [
+              -8019.0,
+              98417.0
+            ]
+          },
+          "housing": {
+            "missing": 0,
+            "unique": 3,
+            "kind": "categorical",
+            "format_inconsistencies": 0,
+            "unknown_semantic_count": 685,
+            "top_values": {
+              "yes": 14665,
+              "no": 11774,
+              "unknown": 685
+            }
+          },
+          "loan": {
+            "missing": 0,
+            "unique": 3,
+            "kind": "categorical",
+            "format_inconsistencies": 0,
+            "unknown_semantic_count": 631,
+            "top_values": {
+              "no": 22234,
+              "yes": 4259,
+              "unknown": 631
+            }
+          },
+          "contact": {
+            "missing": 0,
+            "unique": 3,
+            "kind": "categorical",
+            "format_inconsistencies": 0,
+            "unknown_semantic_count": 8297,
+            "top_values": {
+              "cellular": 17170,
+              "unknown": 8297,
+              "telephone": 1657
+            }
+          },
+          "day": {
+            "missing": 0,
+            "unique": 31,
+            "kind": "numeric",
+            "strict_parse_errors": 0,
+            "semantic_parse_errors": 0,
+            "invalid_range": 0,
+            "examples_requiring_parse": [],
+            "range": [
+              1.0,
+              31.0
+            ]
+          },
+          "month": {
+            "missing": 0,
+            "unique": 13,
+            "kind": "categorical",
+            "format_inconsistencies": 0,
+            "unknown_semantic_count": 684,
+            "top_values": {
+              "may": 8035,
+              "jul": 4006,
+              "aug": 3659,
+              "jun": 3110,
+              "nov": 2330
+            }
+          },
+          "duration": {
+            "missing": 0,
+            "unique": 1383,
+            "kind": "numeric",
+            "strict_parse_errors": 0,
+            "semantic_parse_errors": 0,
+            "invalid_range": 0,
+            "examples_requiring_parse": [],
+            "range": [
+              0.0,
+              3881.0
+            ]
+          },
+          "campaign": {
+            "missing": 0,
+            "unique": 47,
+            "kind": "numeric",
+            "strict_parse_errors": 0,
+            "semantic_parse_errors": 0,
+            "invalid_range": 0,
+            "examples_requiring_parse": [],
+            "range": [
+              1.0,
+              63.0
+            ]
+          },
+          "pdays": {
+            "missing": 0,
+            "unique": 489,
+            "kind": "numeric",
+            "strict_parse_errors": 0,
+            "semantic_parse_errors": 0,
+            "invalid_range": 0,
+            "examples_requiring_parse": [],
+            "range": [
+              -1.0,
+              854.0
+            ]
+          },
+          "previous": {
+            "missing": 0,
+            "unique": 36,
+            "kind": "numeric",
+            "strict_parse_errors": 0,
+            "semantic_parse_errors": 0,
+            "invalid_range": 0,
+            "examples_requiring_parse": [],
+            "range": [
+              0.0,
+              275.0
+            ]
+          },
+          "poutcome": {
+            "missing": 0,
+            "unique": 4,
+            "kind": "categorical",
+            "format_inconsistencies": 0,
+            "unknown_semantic_count": 22258,
+            "top_values": {
+              "unknown": 22258,
+              "failure": 2869,
+              "other": 1110,
+              "success": 887
+            }
+          }
+        },
+        "preserved_fields": {
+          "duration": {
+            "processing": "original values preserved unchanged",
+            "excluded_from_quality_totals": true,
+            "excluded_from_planning_and_prediction": true,
+            "excluded_from_training_deduplication": true
+          }
+        },
+        "duplicate_rule": "Equal prediction inputs and target; identifiers and duration are excluded. Cleaning deduplicates normalized values before outlier replacement and imputation.",
+        "semantics": {
+          "pdays_minus_one": "not previously contacted; valid sentinel",
+          "negative_balance": "valid balance, not automatically an anomaly",
+          "unknown": "a source category, not a missing marker",
+          "duration": "preserved for delivery, excluded from prediction"
+        }
+      },
+      "guardrails": {
+        "passed": true,
+        "reasons": [],
+        "max_legal_clip_fraction": 0.02,
+        "maximum_training_row_removal_fraction": 0.2
+      },
+      "changes": {
+        "invalid_to_missing": 1085,
+        "clipped_legal_cells": 0,
+        "legal_numeric_cells": 157501,
+        "clipped_by_field": {},
+        "clipped_legal_fraction": 0.0,
+        "numeric_missing_filled": 5243,
+        "categorical_missing_filled": 6014,
+        "duplicates_removed": 273,
+        "rows_before": 27397,
+        "rows_after": 27124
+      },
+      "artifacts": {
+        "train_processed": "runs/offline-demo/fixed/artifacts/train_processed.csv",
+        "validation_processed": "runs/offline-demo/fixed/artifacts/validation_processed.csv",
+        "test_processed": "runs/offline-demo/fixed/artifacts/test_processed.csv",
+        "preprocessing": "runs/offline-demo/fixed/artifacts/preprocessing.json",
+        "model": "runs/offline-demo/fixed/artifacts/model.joblib",
+        "test_metrics": "runs/offline-demo/fixed/artifacts/test_metrics.json"
+      },
+      "final_fit_eval_seconds": 3.858,
+      "repair_evaluation": {
+        "cell_repairs": {
+          "missing": {
+            "injected": 10172,
+            "retained_evaluable": 10172,
+            "exactly_restored": 2080,
+            "nonmissing_after": 10172,
+            "schema_valid_after": 4158,
+            "numeric_retained_evaluable": 4158,
+            "exact_restoration_rate": 0.20448289421942586,
+            "filled_rate": 1.0,
+            "schema_valid_rate_after": 1.0,
+            "numeric_reconstruction_mae_by_field": {
+              "age": {
+                "mae": 8.371232876712329,
+                "n": 730,
+                "unit": "years"
+              },
+              "balance": {
+                "mae": 1187.4840055632824,
+                "n": 719,
+                "unit": "EUR"
+              },
+              "previous": {
+                "mae": 0.6838995568685377,
+                "n": 677,
+                "unit": "contacts"
+              },
+              "day": {
+                "mae": 7.068278805120911,
+                "n": 703,
+                "unit": "day_of_month"
+              },
+              "campaign": {
+                "mae": 1.5147744945567652,
+                "n": 643,
+                "unit": "contacts"
+              },
+              "pdays": {
+                "mae": 46.234693877551024,
+                "n": 686,
+                "unit": "days"
+              }
+            },
+            "categorical_reconstruction_accuracy": 0.12487529098769538
+          },
+          "outlier": {
+            "injected": 1085,
+            "retained_evaluable": 1085,
+            "exactly_restored": 405,
+            "nonmissing_after": 1085,
+            "schema_valid_after": 1085,
+            "numeric_retained_evaluable": 1085,
+            "exact_restoration_rate": 0.37327188940092165,
+            "filled_rate": 1.0,
+            "schema_valid_rate_after": 1.0,
+            "numeric_reconstruction_mae_by_field": {
+              "pdays": {
+                "mae": 34.28729281767956,
+                "n": 181,
+                "unit": "days"
+              },
+              "day": {
+                "mae": 7.256756756756757,
+                "n": 222,
+                "unit": "day_of_month"
+              },
+              "previous": {
+                "mae": 0.36,
+                "n": 225,
+                "unit": "contacts"
+              },
+              "age": {
+                "mae": 8.861607142857142,
+                "n": 224,
+                "unit": "years"
+              },
+              "campaign": {
+                "mae": 1.888412017167382,
+                "n": 233,
+                "unit": "contacts"
+              }
+            },
+            "categorical_reconstruction_accuracy": null
+          },
+          "numeric_format": {
+            "injected": 1628,
+            "retained_evaluable": 1628,
+            "exactly_restored": 1628,
+            "nonmissing_after": 1628,
+            "schema_valid_after": 1628,
+            "numeric_retained_evaluable": 1628,
+            "exact_restoration_rate": 1.0,
+            "filled_rate": 1.0,
+            "schema_valid_rate_after": 1.0,
+            "numeric_reconstruction_mae_by_field": {
+              "balance": {
+                "mae": 0.0,
+                "n": 444,
+                "unit": "EUR"
+              },
+              "previous": {
+                "mae": 0.0,
+                "n": 228,
+                "unit": "contacts"
+              },
+              "campaign": {
+                "mae": 0.0,
+                "n": 255,
+                "unit": "contacts"
+              },
+              "day": {
+                "mae": 0.0,
+                "n": 233,
+                "unit": "day_of_month"
+              },
+              "pdays": {
+                "mae": 0.0,
+                "n": 241,
+                "unit": "days"
+              },
+              "age": {
+                "mae": 0.0,
+                "n": 227,
+                "unit": "years"
+              }
+            },
+            "categorical_reconstruction_accuracy": null
+          },
+          "categorical_format": {
+            "injected": 1628,
+            "retained_evaluable": 1628,
+            "exactly_restored": 1628,
+            "nonmissing_after": 1628,
+            "schema_valid_after": 0,
+            "numeric_retained_evaluable": 0,
+            "exact_restoration_rate": 1.0,
+            "filled_rate": 1.0,
+            "schema_valid_rate_after": null,
+            "numeric_reconstruction_mae_by_field": {},
+            "categorical_reconstruction_accuracy": 1.0
+          }
+        },
+        "duplicates": {
+          "injected": 271,
+          "removed": 271,
+          "removal_recall": 1.0,
+          "original_rows_retained": 271
+        },
+        "reference_rows_retained": 27124,
+        "reference_rows_removed": 2,
+        "reference_rows": 27126,
+        "dirty_rows": 27397,
+        "untouched_cells": {
+          "retained_evaluable": 392347,
+          "changed": 0,
+          "unintended_change_rate": 0.0,
+          "scope": "Uncorrupted, retained source cells in the 15 prediction features only; duration, target and identifiers are excluded. Source-missing or schema-invalid numeric values are excluded from the denominator."
+        },
+        "note": "Exact restoration is meaningful for reversible formatting. Imputation is an estimate, so missing/outlier reconstruction is reported separately; source data is not absolute ground truth. Source rows removed by equal-input/equal-label merging may represent independent customers; report reference row retention as its cost."
+      }
+    },
+    {
+      "id": "agent",
+      "label": "智能体（规则模拟）",
+      "ok": true,
+      "plan": {
+        "name": "semantic_repair",
+        "numeric_parser": "semantic",
+        "numeric_imputation": "median",
+        "categorical_imputation": "unknown",
+        "outlier_policy": "invalid_to_missing",
+        "deduplicate": true,
+        "class_weight": "none",
+        "reason": "离线规则模拟：根据工具失败反馈改用语义解析。"
+      },
+      "validation": {
+        "macro_f1": 0.614656535546415,
+        "minority_recall": 0.1843100189035917,
+        "average_precision": 0.403300493013109,
+        "balanced_accuracy": 0.5855793581491906,
+        "accuracy": 0.8929440389294404,
+        "confusion_matrix": [
+          [
+            7879,
+            105
+          ],
+          [
+            863,
+            195
+          ]
+        ],
+        "confusion_matrix_labels": [
+          "no",
+          "yes"
+        ],
+        "rows": 9042,
+        "positive_class": "yes"
+      },
+      "test": {
+        "macro_f1": 0.6145715906086037,
+        "minority_recall": 0.18714555765595464,
+        "average_precision": 0.3912829152593103,
+        "balanced_accuracy": 0.5860586899112585,
+        "accuracy": 0.8916288842198385,
+        "confusion_matrix": [
+          [
+            7865,
+            120
+          ],
+          [
+            860,
+            198
+          ]
+        ],
+        "confusion_matrix_labels": [
+          "no",
+          "yes"
+        ],
+        "rows": 9043,
+        "positive_class": "yes"
+      },
+      "quality_after": {
+        "rows": 27124,
+        "feature_count": 16,
+        "prediction_feature_count": 15,
+        "quality_count_scope": "prediction features only; duration is preserved metadata",
+        "missing_cells": 0,
+        "duplicate_rows": 4,
+        "numeric_parse_errors": 0,
+        "numeric_range_violations": 0,
+        "categorical_format_inconsistencies": 0,
+        "conflicting_label_groups": 0,
+        "label_counts": {
+          "no": 23951,
+          "yes": 3173
+        },
+        "fields": {
+          "age": {
+            "missing": 0,
+            "unique": 75,
+            "kind": "numeric",
+            "strict_parse_errors": 0,
+            "semantic_parse_errors": 0,
+            "invalid_range": 0,
+            "examples_requiring_parse": [],
+            "range": [
+              18.0,
+              95.0
+            ]
+          },
+          "job": {
+            "missing": 0,
+            "unique": 12,
+            "kind": "categorical",
+            "format_inconsistencies": 0,
+            "unknown_semantic_count": 828,
+            "top_values": {
+              "blue-collar": 5710,
+              "management": 5574,
+              "technician": 4446,
+              "admin.": 3002,
+              "services": 2437
+            }
+          },
+          "marital": {
+            "missing": 0,
+            "unique": 4,
+            "kind": "categorical",
+            "format_inconsistencies": 0,
+            "unknown_semantic_count": 704,
+            "top_values": {
+              "married": 15876,
+              "single": 7539,
+              "divorced": 3005,
+              "unknown": 704
+            }
+          },
+          "education": {
+            "missing": 0,
+            "unique": 4,
+            "kind": "categorical",
+            "format_inconsistencies": 0,
+            "unknown_semantic_count": 1701,
+            "top_values": {
+              "secondary": 13608,
+              "tertiary": 7799,
+              "primary": 4016,
+              "unknown": 1701
+            }
+          },
+          "default": {
+            "missing": 0,
+            "unique": 3,
+            "kind": "categorical",
+            "format_inconsistencies": 0,
+            "unknown_semantic_count": 662,
+            "top_values": {
+              "no": 25999,
+              "unknown": 662,
+              "yes": 463
+            }
+          },
+          "balance": {
+            "missing": 0,
+            "unique": 5799,
+            "kind": "numeric",
+            "strict_parse_errors": 0,
+            "semantic_parse_errors": 0,
+            "invalid_range": 0,
+            "examples_requiring_parse": [],
+            "range": [
+              -8019.0,
+              98417.0
+            ]
+          },
+          "housing": {
+            "missing": 0,
+            "unique": 3,
+            "kind": "categorical",
+            "format_inconsistencies": 0,
+            "unknown_semantic_count": 685,
+            "top_values": {
+              "yes": 14665,
+              "no": 11774,
+              "unknown": 685
+            }
+          },
+          "loan": {
+            "missing": 0,
+            "unique": 3,
+            "kind": "categorical",
+            "format_inconsistencies": 0,
+            "unknown_semantic_count": 631,
+            "top_values": {
+              "no": 22234,
+              "yes": 4259,
+              "unknown": 631
+            }
+          },
+          "contact": {
+            "missing": 0,
+            "unique": 3,
+            "kind": "categorical",
+            "format_inconsistencies": 0,
+            "unknown_semantic_count": 8297,
+            "top_values": {
+              "cellular": 17170,
+              "unknown": 8297,
+              "telephone": 1657
+            }
+          },
+          "day": {
+            "missing": 0,
+            "unique": 31,
+            "kind": "numeric",
+            "strict_parse_errors": 0,
+            "semantic_parse_errors": 0,
+            "invalid_range": 0,
+            "examples_requiring_parse": [],
+            "range": [
+              1.0,
+              31.0
+            ]
+          },
+          "month": {
+            "missing": 0,
+            "unique": 13,
+            "kind": "categorical",
+            "format_inconsistencies": 0,
+            "unknown_semantic_count": 684,
+            "top_values": {
+              "may": 8035,
+              "jul": 4006,
+              "aug": 3659,
+              "jun": 3110,
+              "nov": 2330
+            }
+          },
+          "duration": {
+            "missing": 0,
+            "unique": 1383,
+            "kind": "numeric",
+            "strict_parse_errors": 0,
+            "semantic_parse_errors": 0,
+            "invalid_range": 0,
+            "examples_requiring_parse": [],
+            "range": [
+              0.0,
+              3881.0
+            ]
+          },
+          "campaign": {
+            "missing": 0,
+            "unique": 47,
+            "kind": "numeric",
+            "strict_parse_errors": 0,
+            "semantic_parse_errors": 0,
+            "invalid_range": 0,
+            "examples_requiring_parse": [],
+            "range": [
+              1.0,
+              63.0
+            ]
+          },
+          "pdays": {
+            "missing": 0,
+            "unique": 489,
+            "kind": "numeric",
+            "strict_parse_errors": 0,
+            "semantic_parse_errors": 0,
+            "invalid_range": 0,
+            "examples_requiring_parse": [],
+            "range": [
+              -1.0,
+              854.0
+            ]
+          },
+          "previous": {
+            "missing": 0,
+            "unique": 36,
+            "kind": "numeric",
+            "strict_parse_errors": 0,
+            "semantic_parse_errors": 0,
+            "invalid_range": 0,
+            "examples_requiring_parse": [],
+            "range": [
+              0.0,
+              275.0
+            ]
+          },
+          "poutcome": {
+            "missing": 0,
+            "unique": 4,
+            "kind": "categorical",
+            "format_inconsistencies": 0,
+            "unknown_semantic_count": 22258,
+            "top_values": {
+              "unknown": 22258,
+              "failure": 2869,
+              "other": 1110,
+              "success": 887
+            }
+          }
+        },
+        "preserved_fields": {
+          "duration": {
+            "processing": "original values preserved unchanged",
+            "excluded_from_quality_totals": true,
+            "excluded_from_planning_and_prediction": true,
+            "excluded_from_training_deduplication": true
+          }
+        },
+        "duplicate_rule": "Equal prediction inputs and target; identifiers and duration are excluded. Cleaning deduplicates normalized values before outlier replacement and imputation.",
+        "semantics": {
+          "pdays_minus_one": "not previously contacted; valid sentinel",
+          "negative_balance": "valid balance, not automatically an anomaly",
+          "unknown": "a source category, not a missing marker",
+          "duration": "preserved for delivery, excluded from prediction"
+        }
+      },
+      "guardrails": {
+        "passed": true,
+        "reasons": [],
+        "max_legal_clip_fraction": 0.02,
+        "maximum_training_row_removal_fraction": 0.2
+      },
+      "changes": {
+        "invalid_to_missing": 1085,
+        "clipped_legal_cells": 0,
+        "legal_numeric_cells": 157501,
+        "clipped_by_field": {},
+        "clipped_legal_fraction": 0.0,
+        "numeric_missing_filled": 5243,
+        "categorical_missing_filled": 6014,
+        "duplicates_removed": 273,
+        "rows_before": 27397,
+        "rows_after": 27124
+      },
+      "artifacts": {
+        "train_processed": "runs/offline-demo/agent/artifacts/train_processed.csv",
+        "validation_processed": "runs/offline-demo/agent/artifacts/validation_processed.csv",
+        "test_processed": "runs/offline-demo/agent/artifacts/test_processed.csv",
+        "preprocessing": "runs/offline-demo/agent/artifacts/preprocessing.json",
+        "model": "runs/offline-demo/agent/artifacts/model.joblib",
+        "test_metrics": "runs/offline-demo/agent/artifacts/test_metrics.json"
+      },
+      "final_fit_eval_seconds": 3.861,
+      "repair_evaluation": {
+        "cell_repairs": {
+          "missing": {
+            "injected": 10172,
+            "retained_evaluable": 10172,
+            "exactly_restored": 2080,
+            "nonmissing_after": 10172,
+            "schema_valid_after": 4158,
+            "numeric_retained_evaluable": 4158,
+            "exact_restoration_rate": 0.20448289421942586,
+            "filled_rate": 1.0,
+            "schema_valid_rate_after": 1.0,
+            "numeric_reconstruction_mae_by_field": {
+              "age": {
+                "mae": 8.371232876712329,
+                "n": 730,
+                "unit": "years"
+              },
+              "balance": {
+                "mae": 1187.4840055632824,
+                "n": 719,
+                "unit": "EUR"
+              },
+              "previous": {
+                "mae": 0.6838995568685377,
+                "n": 677,
+                "unit": "contacts"
+              },
+              "day": {
+                "mae": 7.068278805120911,
+                "n": 703,
+                "unit": "day_of_month"
+              },
+              "campaign": {
+                "mae": 1.5147744945567652,
+                "n": 643,
+                "unit": "contacts"
+              },
+              "pdays": {
+                "mae": 46.234693877551024,
+                "n": 686,
+                "unit": "days"
+              }
+            },
+            "categorical_reconstruction_accuracy": 0.12487529098769538
+          },
+          "outlier": {
+            "injected": 1085,
+            "retained_evaluable": 1085,
+            "exactly_restored": 405,
+            "nonmissing_after": 1085,
+            "schema_valid_after": 1085,
+            "numeric_retained_evaluable": 1085,
+            "exact_restoration_rate": 0.37327188940092165,
+            "filled_rate": 1.0,
+            "schema_valid_rate_after": 1.0,
+            "numeric_reconstruction_mae_by_field": {
+              "pdays": {
+                "mae": 34.28729281767956,
+                "n": 181,
+                "unit": "days"
+              },
+              "day": {
+                "mae": 7.256756756756757,
+                "n": 222,
+                "unit": "day_of_month"
+              },
+              "previous": {
+                "mae": 0.36,
+                "n": 225,
+                "unit": "contacts"
+              },
+              "age": {
+                "mae": 8.861607142857142,
+                "n": 224,
+                "unit": "years"
+              },
+              "campaign": {
+                "mae": 1.888412017167382,
+                "n": 233,
+                "unit": "contacts"
+              }
+            },
+            "categorical_reconstruction_accuracy": null
+          },
+          "numeric_format": {
+            "injected": 1628,
+            "retained_evaluable": 1628,
+            "exactly_restored": 1628,
+            "nonmissing_after": 1628,
+            "schema_valid_after": 1628,
+            "numeric_retained_evaluable": 1628,
+            "exact_restoration_rate": 1.0,
+            "filled_rate": 1.0,
+            "schema_valid_rate_after": 1.0,
+            "numeric_reconstruction_mae_by_field": {
+              "balance": {
+                "mae": 0.0,
+                "n": 444,
+                "unit": "EUR"
+              },
+              "previous": {
+                "mae": 0.0,
+                "n": 228,
+                "unit": "contacts"
+              },
+              "campaign": {
+                "mae": 0.0,
+                "n": 255,
+                "unit": "contacts"
+              },
+              "day": {
+                "mae": 0.0,
+                "n": 233,
+                "unit": "day_of_month"
+              },
+              "pdays": {
+                "mae": 0.0,
+                "n": 241,
+                "unit": "days"
+              },
+              "age": {
+                "mae": 0.0,
+                "n": 227,
+                "unit": "years"
+              }
+            },
+            "categorical_reconstruction_accuracy": null
+          },
+          "categorical_format": {
+            "injected": 1628,
+            "retained_evaluable": 1628,
+            "exactly_restored": 1628,
+            "nonmissing_after": 1628,
+            "schema_valid_after": 0,
+            "numeric_retained_evaluable": 0,
+            "exact_restoration_rate": 1.0,
+            "filled_rate": 1.0,
+            "schema_valid_rate_after": null,
+            "numeric_reconstruction_mae_by_field": {},
+            "categorical_reconstruction_accuracy": 1.0
+          }
+        },
+        "duplicates": {
+          "injected": 271,
+          "removed": 271,
+          "removal_recall": 1.0,
+          "original_rows_retained": 271
+        },
+        "reference_rows_retained": 27124,
+        "reference_rows_removed": 2,
+        "reference_rows": 27126,
+        "dirty_rows": 27397,
+        "untouched_cells": {
+          "retained_evaluable": 392347,
+          "changed": 0,
+          "unintended_change_rate": 0.0,
+          "scope": "Uncorrupted, retained source cells in the 15 prediction features only; duration, target and identifiers are excluded. Source-missing or schema-invalid numeric values are excluded from the denominator."
+        },
+        "note": "Exact restoration is meaningful for reversible formatting. Imputation is an estimate, so missing/outlier reconstruction is reported separately; source data is not absolute ground truth. Source rows removed by equal-input/equal-label merging may represent independent customers; report reference row retention as its cost."
+      }
+    }
+  ],
+  "agent": {
+    "mode": "rule_simulation",
+    "is_real_model": false,
+    "provider": "mock",
+    "model": "rule-simulation-v1",
+    "parameters": {
+      "deterministic": true
+    },
+    "status": "completed",
+    "termination": "model_finished",
+    "real_model_validation": "not_run",
+    "seed": 42,
+    "rounds": 4,
+    "provider_calls": 4,
+    "model_calls": 0,
+    "successful_model_responses": 0,
+    "budgets": {
+      "max_candidates": 4,
+      "max_rounds": 8,
+      "max_tool_actions": 8,
+      "max_http_requests_including_retries": 0,
+      "candidate_attempts": 3,
+      "candidates_evaluated": 3,
+      "tool_calls_received": 3,
+      "tool_actions_processed": 3,
+      "invalid_tool_calls": 0
+    },
+    "candidates": [
+      {
+        "index": 1,
+        "plan": {
+          "name": "strict_baseline",
+          "numeric_parser": "strict",
+          "numeric_imputation": "median",
+          "categorical_imputation": "unknown",
+          "outlier_policy": "invalid_to_missing",
+          "deduplicate": true,
+          "class_weight": "none",
+          "reason": "离线规则模拟：先尝试严格解析以检查格式问题。"
+        },
+        "ok": false,
+        "guardrails": {
+          "passed": false,
+          "reasons": [
+            "ValueError: numeric_parser=strict could not parse values: {'age': {'count': 228, 'examples': ['44 years', '46 years']}, 'balance': {'count': 447, 'examples': ['€424', '€2,476']}, 'day': {'count': 233, 'examples': ['5 days', '6 days']}, 'campaign': {'count': 257, 'examples': ['1 次', '1 次']}, 'pdays': {'count': 241, 'examples': ['-1 days', '-1 days']}, 'previous': {'count': 229, 'examples': ['0 次', '0 次']}}. Use semantic for recognized currency/thousands/unit formats."
+          ]
+        },
+        "validation": null,
+        "error": "ValueError: numeric_parser=strict could not parse values: {'age': {'count': 228, 'examples': ['44 years', '46 years']}, 'balance': {'count': 447, 'examples': ['€424', '€2,476']}, 'day': {'count': 233, 'examples': ['5 days', '6 days']}, 'campaign': {'count': 257, 'examples': ['1 次', '1 次']}, 'pdays': {'count': 241, 'examples': ['-1 days', '-1 days']}, 'previous': {'count': 229, 'examples': ['0 次', '0 次']}}. Use semantic for recognized currency/thousands/unit formats.",
+        "decision": "rejected"
+      },
+      {
+        "index": 2,
+        "plan": {
+          "name": "semantic_repair",
+          "numeric_parser": "semantic",
+          "numeric_imputation": "median",
+          "categorical_imputation": "unknown",
+          "outlier_policy": "invalid_to_missing",
+          "deduplicate": true,
+          "class_weight": "none",
+          "reason": "离线规则模拟：根据工具失败反馈改用语义解析。"
+        },
+        "ok": true,
+        "guardrails": {
+          "passed": true,
+          "reasons": [],
+          "max_legal_clip_fraction": 0.02,
+          "maximum_training_row_removal_fraction": 0.2
+        },
+        "validation": {
+          "macro_f1": 0.614656535546415,
+          "minority_recall": 0.1843100189035917,
+          "average_precision": 0.403300493013109,
+          "balanced_accuracy": 0.5855793581491906,
+          "accuracy": 0.8929440389294404,
+          "confusion_matrix": [
+            [
+              7879,
+              105
+            ],
+            [
+              863,
+              195
+            ]
+          ],
+          "confusion_matrix_labels": [
+            "no",
+            "yes"
+          ],
+          "rows": 9042,
+          "positive_class": "yes"
+        },
+        "error": null,
+        "decision": "selected"
+      },
+      {
+        "index": 3,
+        "plan": {
+          "name": "balanced_iqr_candidate",
+          "numeric_parser": "semantic",
+          "numeric_imputation": "median",
+          "categorical_imputation": "unknown",
+          "outlier_policy": "iqr_clip",
+          "deduplicate": true,
+          "class_weight": "balanced",
+          "reason": "离线规则模拟：比较受控候选，由验证指标与硬约束决定是否保留。"
+        },
+        "ok": false,
+        "guardrails": {
+          "passed": false,
+          "reasons": [
+            "IQR clipping changed more than 2% of legal numeric cells; reject and roll back."
+          ],
+          "max_legal_clip_fraction": 0.02,
+          "maximum_training_row_removal_fraction": 0.2
+        },
+        "validation": null,
+        "error": "IQR clipping changed more than 2% of legal numeric cells; reject and roll back.",
+        "decision": "rejected"
+      }
+    ],
+    "selected_plan": {
+      "name": "semantic_repair",
+      "numeric_parser": "semantic",
+      "numeric_imputation": "median",
+      "categorical_imputation": "unknown",
+      "outlier_policy": "invalid_to_missing",
+      "deduplicate": true,
+      "class_weight": "none",
+      "reason": "离线规则模拟：根据工具失败反馈改用语义解析。"
+    },
+    "best_validation": {
+      "macro_f1": 0.614656535546415,
+      "minority_recall": 0.1843100189035917,
+      "average_precision": 0.403300493013109,
+      "balanced_accuracy": 0.5855793581491906,
+      "accuracy": 0.8929440389294404,
+      "confusion_matrix": [
+        [
+          7879,
+          105
+        ],
+        [
+          863,
+          195
+        ]
+      ],
+      "confusion_matrix_labels": [
+        "no",
+        "yes"
+      ],
+      "rows": 9042,
+      "positive_class": "yes"
+    },
+    "best_quality_after": {
+      "rows": 27124,
+      "feature_count": 16,
+      "prediction_feature_count": 15,
+      "quality_count_scope": "prediction features only; duration is preserved metadata",
+      "missing_cells": 0,
+      "duplicate_rows": 4,
+      "numeric_parse_errors": 0,
+      "numeric_range_violations": 0,
+      "categorical_format_inconsistencies": 0,
+      "conflicting_label_groups": 0,
+      "label_counts": {
+        "no": 23951,
+        "yes": 3173
+      },
+      "fields": {
+        "age": {
+          "missing": 0,
+          "unique": 75,
+          "kind": "numeric",
+          "strict_parse_errors": 0,
+          "semantic_parse_errors": 0,
+          "invalid_range": 0,
+          "examples_requiring_parse": [],
+          "range": [
+            18.0,
+            95.0
+          ]
+        },
+        "job": {
+          "missing": 0,
+          "unique": 12,
+          "kind": "categorical",
+          "format_inconsistencies": 0,
+          "unknown_semantic_count": 828,
+          "top_values": {
+            "blue-collar": 5710,
+            "management": 5574,
+            "technician": 4446,
+            "admin.": 3002,
+            "services": 2437
+          }
+        },
+        "marital": {
+          "missing": 0,
+          "unique": 4,
+          "kind": "categorical",
+          "format_inconsistencies": 0,
+          "unknown_semantic_count": 704,
+          "top_values": {
+            "married": 15876,
+            "single": 7539,
+            "divorced": 3005,
+            "unknown": 704
+          }
+        },
+        "education": {
+          "missing": 0,
+          "unique": 4,
+          "kind": "categorical",
+          "format_inconsistencies": 0,
+          "unknown_semantic_count": 1701,
+          "top_values": {
+            "secondary": 13608,
+            "tertiary": 7799,
+            "primary": 4016,
+            "unknown": 1701
+          }
+        },
+        "default": {
+          "missing": 0,
+          "unique": 3,
+          "kind": "categorical",
+          "format_inconsistencies": 0,
+          "unknown_semantic_count": 662,
+          "top_values": {
+            "no": 25999,
+            "unknown": 662,
+            "yes": 463
+          }
+        },
+        "balance": {
+          "missing": 0,
+          "unique": 5799,
+          "kind": "numeric",
+          "strict_parse_errors": 0,
+          "semantic_parse_errors": 0,
+          "invalid_range": 0,
+          "examples_requiring_parse": [],
+          "range": [
+            -8019.0,
+            98417.0
+          ]
+        },
+        "housing": {
+          "missing": 0,
+          "unique": 3,
+          "kind": "categorical",
+          "format_inconsistencies": 0,
+          "unknown_semantic_count": 685,
+          "top_values": {
+            "yes": 14665,
+            "no": 11774,
+            "unknown": 685
+          }
+        },
+        "loan": {
+          "missing": 0,
+          "unique": 3,
+          "kind": "categorical",
+          "format_inconsistencies": 0,
+          "unknown_semantic_count": 631,
+          "top_values": {
+            "no": 22234,
+            "yes": 4259,
+            "unknown": 631
+          }
+        },
+        "contact": {
+          "missing": 0,
+          "unique": 3,
+          "kind": "categorical",
+          "format_inconsistencies": 0,
+          "unknown_semantic_count": 8297,
+          "top_values": {
+            "cellular": 17170,
+            "unknown": 8297,
+            "telephone": 1657
+          }
+        },
+        "day": {
+          "missing": 0,
+          "unique": 31,
+          "kind": "numeric",
+          "strict_parse_errors": 0,
+          "semantic_parse_errors": 0,
+          "invalid_range": 0,
+          "examples_requiring_parse": [],
+          "range": [
+            1.0,
+            31.0
+          ]
+        },
+        "month": {
+          "missing": 0,
+          "unique": 13,
+          "kind": "categorical",
+          "format_inconsistencies": 0,
+          "unknown_semantic_count": 684,
+          "top_values": {
+            "may": 8035,
+            "jul": 4006,
+            "aug": 3659,
+            "jun": 3110,
+            "nov": 2330
+          }
+        },
+        "duration": {
+          "missing": 0,
+          "unique": 1383,
+          "kind": "numeric",
+          "strict_parse_errors": 0,
+          "semantic_parse_errors": 0,
+          "invalid_range": 0,
+          "examples_requiring_parse": [],
+          "range": [
+            0.0,
+            3881.0
+          ]
+        },
+        "campaign": {
+          "missing": 0,
+          "unique": 47,
+          "kind": "numeric",
+          "strict_parse_errors": 0,
+          "semantic_parse_errors": 0,
+          "invalid_range": 0,
+          "examples_requiring_parse": [],
+          "range": [
+            1.0,
+            63.0
+          ]
+        },
+        "pdays": {
+          "missing": 0,
+          "unique": 489,
+          "kind": "numeric",
+          "strict_parse_errors": 0,
+          "semantic_parse_errors": 0,
+          "invalid_range": 0,
+          "examples_requiring_parse": [],
+          "range": [
+            -1.0,
+            854.0
+          ]
+        },
+        "previous": {
+          "missing": 0,
+          "unique": 36,
+          "kind": "numeric",
+          "strict_parse_errors": 0,
+          "semantic_parse_errors": 0,
+          "invalid_range": 0,
+          "examples_requiring_parse": [],
+          "range": [
+            0.0,
+            275.0
+          ]
+        },
+        "poutcome": {
+          "missing": 0,
+          "unique": 4,
+          "kind": "categorical",
+          "format_inconsistencies": 0,
+          "unknown_semantic_count": 22258,
+          "top_values": {
+            "unknown": 22258,
+            "failure": 2869,
+            "other": 1110,
+            "success": 887
+          }
+        }
+      },
+      "preserved_fields": {
+        "duration": {
+          "processing": "original values preserved unchanged",
+          "excluded_from_quality_totals": true,
+          "excluded_from_planning_and_prediction": true,
+          "excluded_from_training_deduplication": true
+        }
+      },
+      "duplicate_rule": "Equal prediction inputs and target; identifiers and duration are excluded. Cleaning deduplicates normalized values before outlier replacement and imputation.",
+      "semantics": {
+        "pdays_minus_one": "not previously contacted; valid sentinel",
+        "negative_balance": "valid balance, not automatically an anomaly",
+        "unknown": "a source category, not a missing marker",
+        "duration": "preserved for delivery, excluded from prediction"
+      }
+    },
+    "usage": {
+      "prompt_tokens": null,
+      "completion_tokens": null,
+      "total_tokens": null,
+      "known_response_cost": null,
+      "estimated_cost": null,
+      "token_scope": "successful_responses_only",
+      "currency": null,
+      "retries": 0,
+      "returned_models": [],
+      "cost_note": "费用为配置单价估算；缓存、峰谷和账单差异可能影响实际金额。未配置价格或用量未知时为 null。"
+    },
+    "provider_error": null,
+    "result_note": "离线规则模拟，用于验证流程；真实大模型效果尚未测试。",
+    "artifacts": {
+      "trace": "runs/offline-demo/agent/trace.jsonl",
+      "selected_plan": "runs/offline-demo/agent/selected_plan.json",
+      "summary": "runs/offline-demo/agent/agent_summary.json"
+    }
+  },
+  "agent_planning_seconds": 5.27,
+  "elapsed_seconds": 23.38,
+  "status": "completed",
+  "note": "离线规则模拟用于工程验证；所有分类指标来自本地真实训练，真实大模型决策效果待接入。"
+}

@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "data-quality-agent": {
+      "command": "/ABSOLUTE/PATH/TO/data-quality-agent/.venv/bin/python",
+      "args": [
+        "-m", "dqagent.mcp_server",
+        "--data-dir", "/ABSOLUTE/PATH/TO/data-quality-agent/data/prepared",
+        "--runs-dir", "/ABSOLUTE/PATH/TO/data-quality-agent/runs"
+      ],
+      "cwd": "/ABSOLUTE/PATH/TO/data-quality-agent"
+    }
+  }
+}

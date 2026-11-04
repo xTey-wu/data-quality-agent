@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "data-quality-agent"
+version = "0.1.0"
+description = "MCP data quality agent with bounded preprocessing tools and reproducible classification evaluation"
+requires-python = ">=3.11"
+dependencies = ["pandas>=2.2,<3.2", "scikit-learn>=1.5,<1.10", "mcp>=2.3,<3"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8,<10"]
+
+[project.scripts]
+dqagent = "dqagent.cli:main"
+dqagent-mcp = "dqagent.mcp_server:main"
+
+[tool.setuptools.packages.find]
+include = ["dqagent*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
