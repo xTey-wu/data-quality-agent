@@ -8,7 +8,9 @@ import math
 import os
 import re
 import secrets
+import sqlite3
 import threading
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -17,7 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from . import modeling, quality
 from .data import load_table
-from .schema import CATEGORICAL, MODEL_FEATURES, MODEL_NUMERIC, TARGET
+from .schema import CATEGORICAL, MODEL_FEATURES, MODEL_NUMERIC, TARGET, plan_signature
 
 
 class CleaningPlan(BaseModel):
@@ -91,17 +93,30 @@ class CleaningService:
         if not self.data_dir.is_dir():
             raise ValueError("Configured data directory does not exist.")
         self.seed = int(seed)
-        self._locks_guard = threading.Lock()
-        self._locks: dict[str, threading.RLock] = {}
         self._audit_lock = threading.Lock()
 
     @staticmethod
     def _envelope(**values) -> dict:
         return {"execution_mode": "host_tool_execution", "internal_model_calls": 0, **values}
 
-    def _lock(self, run_id: str):
-        with self._locks_guard:
-            return self._locks.setdefault(run_id, threading.RLock())
+    @staticmethod
+    @contextmanager
+    def _lock(run_dir: Path):
+        """Serialize state access across processes with a lock released on process exit."""
+        connection = None
+        try:
+            try:
+                connection = sqlite3.connect(run_dir / ".state-lock.sqlite3", timeout=0)
+                connection.execute("BEGIN IMMEDIATE")
+            except sqlite3.Error as error:
+                primary_code = getattr(error, "sqlite_errorcode", 0) & 0xFF
+                if primary_code in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+                    raise ServiceError("run_busy", "此运行正在处理其他调用，请稍后重试。") from None
+                raise ServiceError("run_lock_failed", "无法锁定运行状态，请检查运行目录。") from None
+            yield
+        finally:
+            if connection is not None:
+                connection.close()
 
     def _run_dir(self, run_id: str) -> Path:
         if not isinstance(run_id, str) or not self.RUN_ID.fullmatch(run_id):
@@ -143,9 +158,9 @@ class CleaningService:
             handle.write(json.dumps(_safe_json({"time_utc": _now(), "event": event, **details}),
                                     ensure_ascii=False, allow_nan=False) + "\n")
 
-    def _failure(self, error: ServiceError, *, run_dir=None) -> dict:
-        failure = self._envelope(ok=False, error={"code": error.code, "message": str(error)})
-        self._trace("tool_error", run_dir=run_dir, error=failure["error"])
+    def _failure(self, error: ServiceError, *, run_dir=None, **details) -> dict:
+        failure = self._envelope(ok=False, error={"code": error.code, "message": str(error)}, **details)
+        self._trace("tool_error", run_dir=run_dir, error=failure["error"], **details)
         return failure
 
     def _training_inputs(self, state: dict | None = None):
@@ -212,20 +227,28 @@ class CleaningService:
         run_dir = None
         try:
             run_dir = self._run_dir(run_id)
-            with self._lock(run_id):
+            with self._lock(run_dir):
                 state = self._state(run_dir)
                 self._ensure_open(state, run_dir)
                 if state["candidate_attempts"] >= state["max_candidates"]:
                     raise ServiceError("candidate_budget", "四次候选尝试预算已用完，请定稿或检查运行状态。")
-                state["candidate_attempts"] += 1
-                self._atomic_json(run_dir / "state.json", state)
                 try:
                     candidate = plan if isinstance(plan, CleaningPlan) else CleaningPlan.model_validate(plan)
                     candidate = quality.validate_plan(candidate.model_dump())
                 except (ValidationError, ValueError, TypeError):
+                    state["candidate_attempts"] += 1
+                    self._atomic_json(run_dir / "state.json", state)
                     self._trace("candidate_rejected", run_dir=run_dir, attempt=state["candidate_attempts"],
                                 reason="invalid_plan_schema")
                     return self._failure(ServiceError("invalid_plan", "计划不符合允许的字段、长度或枚举约束。"), run_dir=run_dir)
+                signature = plan_signature(candidate)
+                for previous in state["candidates"]:
+                    if plan_signature(previous["plan"]) == signature:
+                        return self._failure(ServiceError("duplicate_plan", "这些处理参数已评估，可查询原候选或更换参数。"),
+                                             run_dir=run_dir, duplicate_of_attempt=previous["attempt"],
+                                             remaining_candidates=state["max_candidates"] - state["candidate_attempts"])
+                state["candidate_attempts"] += 1
+                self._atomic_json(run_dir / "state.json", state)
                 train, validation, _ = self._training_inputs(state)
                 result = modeling.evaluate_plan(train, validation, candidate, seed=state["seed"])
                 metrics = result.get("validation") or {}
@@ -282,9 +305,9 @@ class CleaningService:
         run_dir = None
         try:
             run_dir = self._run_dir(run_id)
-            with self._lock(run_id):
+            with self._lock(run_dir):
                 state = self._state(run_dir)
-                if (run_dir / "finalization.claim").exists() and state["status"] == "open":
+                if (run_dir / "finalization.claim").exists() and state["status"] in {"open", "finalizing"}:
                     state["status"] = "finalization_interrupted"
                 result = self._public_status(state)
                 self._trace("get_run_status", run_dir=run_dir, status=result["status"])
@@ -295,11 +318,9 @@ class CleaningService:
     def finalize_cleaning_run(self, run_id: str) -> dict:
         """Freeze the best plan before opening the test split; finalize a run once."""
         run_dir = None
-        state = None
-        claimed = False
         try:
             run_dir = self._run_dir(run_id)
-            with self._lock(run_id):
+            with self._lock(run_dir):
                 state = self._state(run_dir)
                 self._ensure_open(state, run_dir)
                 if state["best_plan"] is None:
@@ -313,37 +334,39 @@ class CleaningService:
                 train, validation, _ = self._training_inputs(state)
                 # Exclusive durable claim also blocks repeats after a crash or restart.
                 try:
-                    with (run_dir / "finalization.claim").open("x", encoding="utf-8") as handle:
-                        handle.write(_now() + "\n")
-                        handle.flush()
-                        os.fsync(handle.fileno())
+                    claim = (run_dir / "finalization.claim").open("x", encoding="utf-8")
                 except FileExistsError:
                     raise ServiceError("run_frozen", "运行已经冻结，不能重复执行最终测试。") from None
-                claimed = True
-                state["status"], state["frozen_plan"], state["frozen_at_utc"] = "finalizing", state["best_plan"], _now()
-                state["frozen_decision_threshold"] = float(locked_threshold)
-                self._atomic_json(run_dir / "state.json", state)
-                self._trace("plan_frozen", run_dir=run_dir, plan=state["frozen_plan"], decision_threshold=locked_threshold)
-                test_path = self._data_path("test.csv")
-                test = load_table(test_path)
-                final = modeling.finalize_plan(train, validation, test, state["frozen_plan"],
-                                              run_dir / "artifacts", seed=state["seed"], decision_threshold=locked_threshold)
-                state["status"] = "finalized"
-                state["final_metrics"] = {"validation": final["validation"], "test": final["test"],
-                                          "test_evaluations": final["test_evaluations"]}
-                state["test_sha256"] = hashlib.sha256(test_path.read_bytes()).hexdigest()
-                state["artifacts"] = ["state.json", "trace.jsonl"] + sorted(
-                    str(path.relative_to(run_dir)) for path in (run_dir / "artifacts").iterdir() if path.is_file())
-                self._atomic_json(run_dir / "state.json", state)
-                self._trace("finalize_cleaning_run", run_dir=run_dir, final_metrics=state["final_metrics"])
-                return self._public_status(state)
+                try:
+                    with claim:
+                        claim.write(_now() + "\n")
+                        claim.flush()
+                        os.fsync(claim.fileno())
+                    state.update(status="finalizing", frozen_plan=state["best_plan"], frozen_at_utc=_now(),
+                                 frozen_decision_threshold=float(locked_threshold))
+                    self._atomic_json(run_dir / "state.json", state)
+                    self._trace("plan_frozen", run_dir=run_dir, plan=state["frozen_plan"], decision_threshold=locked_threshold)
+                    test_path = self._data_path("test.csv")
+                    test = load_table(test_path)
+                    final = modeling.finalize_plan(train, validation, test, state["frozen_plan"],
+                                                  run_dir / "artifacts", seed=state["seed"], decision_threshold=locked_threshold)
+                    completed = {
+                        **state, "status": "finalized",
+                        "final_metrics": {"validation": final["validation"], "test": final["test"],
+                                          "test_evaluations": final["test_evaluations"]},
+                        "test_sha256": hashlib.sha256(test_path.read_bytes()).hexdigest(),
+                        "artifacts": ["state.json", "trace.jsonl"] + sorted(
+                            str(path.relative_to(run_dir)) for path in (run_dir / "artifacts").iterdir() if path.is_file()),
+                    }
+                    self._atomic_json(run_dir / "state.json", completed)
+                except Exception as error:
+                    state["status"] = "finalization_failed"
+                    state["finalization_error"] = error.code if isinstance(error, ServiceError) else "finalization_failed"
+                    self._atomic_json(run_dir / "state.json", state)
+                    raise
+                self._trace("finalize_cleaning_run", run_dir=run_dir, final_metrics=completed["final_metrics"])
+                return self._public_status(completed)
         except ServiceError as error:
-            if claimed and state is not None and state.get("status") == "finalizing":
-                state["status"], state["finalization_error"] = "finalization_failed", error.code
-                self._atomic_json(run_dir / "state.json", state)
             return self._failure(error, run_dir=run_dir)
         except Exception:
-            if claimed and state is not None and state.get("status") == "finalizing":
-                state["status"], state["finalization_error"] = "finalization_failed", "finalization_failed"
-                self._atomic_json(run_dir / "state.json", state)
             return self._failure(ServiceError("finalization_failed", "最终处理未完成；运行保持冻结，不能重复使用测试集。"), run_dir=run_dir)

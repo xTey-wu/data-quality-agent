@@ -1,9 +1,12 @@
 """Persistent service and real stdio MCP protocol tests without an LLM API."""
 
 import json
+import multiprocessing
 import sys
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from threading import Event
+from time import sleep
 from unittest.mock import patch
 
 import anyio
@@ -14,7 +17,7 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from pydantic import ValidationError
 
 from dqagent import modeling
-from dqagent.schema import DEFAULT_PLAN, MODEL_FEATURES
+from dqagent.schema import DEFAULT_PLAN, MODEL_FEATURES, plan_signature
 from dqagent.service import CleaningPlan, CleaningService
 
 
@@ -98,18 +101,39 @@ def test_budget_and_state_survive_restart(prepared):
     data, runs = prepared
     service = CleaningService(data, runs)
     run_id = service.start_cleaning_run()["run_id"]
-    for index in range(4):
-        result = service.evaluate_cleaning_plan(run_id, {**DEFAULT_PLAN, "name": f"candidate-{index}"})
-        assert result["ok"]
+    for numeric in ("mean", "median"):
+        for weight in ("none", "balanced"):
+            plan = {**DEFAULT_PLAN, "numeric_imputation": numeric, "class_weight": weight}
+            assert service.evaluate_cleaning_plan(run_id, plan)["ok"]
     restarted = CleaningService(data, runs)
     assert restarted.get_run_status(run_id)["candidate_attempts"] == 4
     assert restarted.evaluate_cleaning_plan(run_id, DEFAULT_PLAN)["error"]["code"] == "candidate_budget"
 
 
+def test_duplicate_plan_is_skipped_after_service_restart(prepared):
+    data, runs = prepared
+    service = CleaningService(data, runs)
+    run_id = service.start_cleaning_run()["run_id"]
+    legacy = {key: value for key, value in DEFAULT_PLAN.items()
+              if key not in {"add_missing_indicators", "threshold_policy"}}
+    assert service.evaluate_cleaning_plan(run_id, legacy)["candidate"]["decision"] == "selected"
+
+    restarted = CleaningService(data, runs)
+    with patch("dqagent.service.modeling.evaluate_plan", wraps=modeling.evaluate_plan) as evaluate:
+        repeat = {**DEFAULT_PLAN, "name": "renamed", "reason": "Equivalent actions."}
+        repeated = restarted.evaluate_cleaning_plan(run_id, repeat)
+        assert repeated["error"]["code"] == "duplicate_plan"
+        assert repeated["duplicate_of_attempt"] == 1
+        assert repeated["remaining_candidates"] == 3
+        evaluate.assert_not_called()
+        updated = restarted.evaluate_cleaning_plan(run_id, {**repeat, "threshold_policy": "validation_macro_f1"})
+        assert updated["candidate"]["attempt"] == 2
+        evaluate.assert_called_once()
+
+
 def test_rule_search_compares_multiple_real_legal_plans_without_an_api(prepared):
     from dqagent.data import load_table
     from dqagent.engine import run_agent
-    from dqagent.providers import MockProvider
     data, runs = prepared
     result = run_agent(load_table(data / "train_dirty.csv"), load_table(data / "validation.csv"), runs / "rule_search")
     assert result["mode"] == "rule_simulation" and result["model_calls"] == 0
@@ -120,7 +144,7 @@ def test_rule_search_compares_multiple_real_legal_plans_without_an_api(prepared)
     assert {plan["class_weight"] for plan in plans} == {"none", "balanced"}
     assert {plan["categorical_imputation"] for plan in plans} == {"unknown", "most_frequent"}
     assert {plan["numeric_imputation"] for plan in plans} == {"median", "mean"}
-    assert len({MockProvider._signature(plan) for plan in plans}) == 4
+    assert len({plan_signature(plan) for plan in plans}) == 4
     assert result["best_validation"]["macro_f1"] == max(candidate["validation"]["macro_f1"] for candidate in result["candidates"])
     assert result["best_decision_threshold"] == result["best_validation"]["decision_threshold"]
 
@@ -238,6 +262,74 @@ def test_concurrent_finalize_only_executes_local_test_once(prepared):
     assert sum(result["ok"] for result in results) == 1
 
 
+def test_independent_services_cannot_race_the_last_slot_or_finalization(prepared):
+    data, runs = prepared
+    first, second = CleaningService(data, runs), CleaningService(data, runs)
+    run_id = first.start_cleaning_run()["run_id"]
+    for options in ({}, {"numeric_imputation": "mean"}, {"class_weight": "none"}):
+        assert first.evaluate_cleaning_plan(run_id, {**DEFAULT_PLAN, **options})["ok"]
+
+    started, release = Event(), Event()
+
+    original_evaluate = modeling.evaluate_plan
+
+    def slow_evaluate(*args, **kwargs):
+        started.set()
+        assert release.wait(10)
+        return original_evaluate(*args, **kwargs)
+
+    fourth = {**DEFAULT_PLAN, "numeric_imputation": "mean", "class_weight": "none"}
+    fifth = {**DEFAULT_PLAN, "deduplicate": False}
+    with patch("dqagent.service.modeling.evaluate_plan", side_effect=slow_evaluate) as evaluator:
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            pending = pool.submit(first.evaluate_cleaning_plan, run_id, fourth)
+            try:
+                assert started.wait(10)
+                assert second.evaluate_cleaning_plan(run_id, fifth)["error"]["code"] == "run_busy"
+                assert second.finalize_cleaning_run(run_id)["error"]["code"] == "run_busy"
+            finally:
+                release.set()
+            assert pending.result(timeout=10)["candidate"]["attempt"] == 4
+        evaluator.assert_called_once()
+    assert second.evaluate_cleaning_plan(run_id, fifth)["error"]["code"] == "candidate_budget"
+    final = second.finalize_cleaning_run(run_id)
+    assert final["status"] == "finalized"
+    assert final["candidate_attempts"] == len(final["candidates"]) == 4
+
+
+def _pause_before_reading_test(data, runs, run_id, test_opening):
+    from dqagent.service import load_table
+
+    def pause(path):
+        if Path(path).name == "test.csv":
+            test_opening.set()
+            sleep(60)
+        return load_table(path)
+
+    with patch("dqagent.service.load_table", side_effect=pause):
+        CleaningService(data, runs).finalize_cleaning_run(run_id)
+
+
+def test_killed_finalizer_releases_process_lock_but_cannot_repeat_test(prepared):
+    data, runs = prepared
+    service = CleaningService(data, runs)
+    run_id = service.start_cleaning_run()["run_id"]
+    assert service.evaluate_cleaning_plan(run_id, DEFAULT_PLAN)["ok"]
+    context = multiprocessing.get_context("spawn")
+    test_opening = context.Event()
+    child = context.Process(target=_pause_before_reading_test, args=(data, runs, run_id, test_opening))
+    child.start()
+    try:
+        assert test_opening.wait(15)
+        assert service.get_run_status(run_id)["error"]["code"] == "run_busy"
+    finally:
+        child.terminate()
+        child.join(10)
+    assert not child.is_alive()
+    assert service.get_run_status(run_id)["status"] == "finalization_interrupted"
+    assert service.finalize_cleaning_run(run_id)["error"]["code"] == "run_frozen"
+
+
 def test_stdio_protocol_initialize_tools_prompt_and_actual_workflow(prepared):
     data, runs = prepared
     root = Path(__file__).resolve().parents[1]
@@ -281,6 +373,9 @@ def test_stdio_protocol_initialize_tools_prompt_and_actual_workflow(prepared):
                 candidate = await call("evaluate_cleaning_plan", {"run_id": run_id, "plan": tuned})
                 assert candidate["candidate"]["decision"] == "selected"
                 threshold = candidate["candidate"]["decision_threshold"]
+                repeat = await call("evaluate_cleaning_plan", {"run_id": run_id, "plan": {**tuned, "name": "retry"}})
+                assert repeat["error"]["code"] == "duplicate_plan"
+                assert repeat["remaining_candidates"] == 3
                 final = await call("finalize_cleaning_run", {"run_id": run_id})
                 assert final["status"] == "finalized"
                 assert final["frozen_decision_threshold"] == threshold

@@ -1,5 +1,7 @@
 """Dataset contract and the deliberately small cleaning action space."""
 
+import json
+
 FEATURES = [
     "age", "job", "marital", "education", "default", "balance", "housing",
     "loan", "contact", "day", "month", "duration", "campaign", "pdays",
@@ -40,9 +42,16 @@ DEFAULT_PLAN = {
     **OPTIONAL_PLAN_DEFAULTS,
 }
 
+
 NUMERIC_FALLBACKS = {
     "age": 40.0, "balance": 0.0, "day": 15.0, "duration": 0.0,
     "campaign": 1.0, "pdays": -1.0, "previous": 0.0,
 }
 
 DATASET_URL = "https://archive.ics.uci.edu/static/public/222/bank+marketing.zip"
+
+
+def plan_signature(plan: dict) -> str:
+    """Identify the actions in a plan, independent of its description."""
+    actions = {key: value for key, value in plan.items() if key not in {"name", "reason"}}
+    return json.dumps({**OPTIONAL_PLAN_DEFAULTS, **actions}, sort_keys=True, ensure_ascii=False)

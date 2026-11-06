@@ -49,6 +49,8 @@ python -m dqagent.mcp_server --data-dir data/prepared --runs-dir runs
 
 单次运行最多尝试4个候选。只有满足硬约束的方案可参与验证 Macro-F1 比较；不合格或未超过已有方案时保留原方案。最终评价同时冻结方案与实际阈值，再读取测试集；状态持久化，进程重启也不会重新打开同一运行的测试入口。
 
+服务根据处理参数识别已有评估结果的方案，修改计划名称、理由或显式写出默认值仍视为同一方案。预算尚有余量时，重复提交会返回 `duplicate_plan`、原候选编号和剩余名额。MCP 服务为每个运行单独加锁，同一运行正在处理时，并发请求会收到 `run_busy`，当前操作完成后可用 `get_run_status` 查看结果。
+
 ## 数据和评价协议
 
 源数据采用 UCI Bank Marketing 的 `bank-full.csv`：45,211 条记录、16个输入字段、标签 `y`。原始文件哈希与来源保存在 `data/raw/source.json`。

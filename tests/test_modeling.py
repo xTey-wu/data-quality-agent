@@ -113,13 +113,13 @@ def test_preprocessing_and_classifier_fit_only_training_rows(tmp_path, monkeypat
     validation["job"] = "validation-only-category"
     test["job"] = "test-only-category"
     fitted_rows = []
-    cleaner_fit = Cleaner.fit
+    cleaner_fit = Cleaner._fit_training
 
     def tracked_fit(self, frame):
         fitted_rows.append(frame[ROW_ID].tolist())
         return cleaner_fit(self, frame)
 
-    monkeypatch.setattr(Cleaner, "fit", tracked_fit)
+    monkeypatch.setattr(Cleaner, "_fit_training", tracked_fit)
     modeling.finalize_plan(training, validation, test, plan(threshold_policy="validation_macro_f1"), tmp_path)
     assert fitted_rows == [training[ROW_ID].tolist()]
     bundle = joblib.load(tmp_path / "model.joblib")

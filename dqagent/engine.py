@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from .providers import MockProvider, ProviderError
-from .schema import CATEGORICAL, MODEL_FEATURES, MODEL_NUMERIC, TARGET
+from .schema import CATEGORICAL, MODEL_FEATURES, MODEL_NUMERIC, TARGET, plan_signature
 
 
 PLAN_OPTIONS = {
@@ -200,11 +200,11 @@ def run_agent(train_df, val_df, output_dir, provider=None, seed=42, max_candidat
                                   "categorical": CATEGORICAL, "target": TARGET},
             "max_candidates": max_candidates,
             "max_tool_actions": max_tool_actions,
-            "budget_notice": "非法 evaluate_plan 参数也消耗候选尝试预算；所有工具请求受独立动作预算约束。",
+            "budget_notice": "非法 evaluate_plan 参数也消耗候选尝试预算；重复参数只计入独立的工具动作预算。",
             "notice": "这只是训练统计，不提供测试集、构造清单或原始参考值。",
         }), ensure_ascii=False, allow_nan=False)},
     ]
-    candidates, usage_records = [], []
+    candidates, usage_records, evaluated_attempts = [], [], {}
     best, best_score = None, None
     rounds, retries, provider_calls, model_calls = 0, 0, 0, 0
     candidate_attempts, tool_calls_received, tool_actions_processed, invalid_tool_calls = 0, 0, 0, 0
@@ -274,14 +274,22 @@ def run_agent(train_df, val_df, output_dir, provider=None, seed=42, max_candidat
                     result = {"ok": False, "error": {"code": "candidate_budget", "message": "候选方案预算已用完。"}}
                 else:
                     tool_actions_processed += 1
-                    candidate_attempts += 1
                     try:
                         plan = _validate_arguments(arguments)
                         plan = quality.validate_plan(plan)
                     except (ValueError, TypeError, KeyError):
+                        candidate_attempts += 1
                         invalid_tool_calls += 1
                         result = {"ok": False, "error": {"code": "invalid_arguments", "message": "方案参数不符合白名单结构或枚举约束。"}}
                     else:
+                        signature = plan_signature(plan)
+                        if signature in evaluated_attempts:
+                            result = {"ok": False, "error": {"code": "duplicate_plan", "message": "这些处理参数已评估，请更换参数。"},
+                                      "duplicate_of_attempt": evaluated_attempts[signature],
+                                      "remaining_candidates": max_candidates - candidate_attempts}
+                    if result is None:
+                        candidate_attempts += 1
+                        evaluated_attempts[signature] = candidate_attempts
                         try:
                             result = modeling.evaluate_plan(train_df, val_df, plan, seed=seed)
                             if not isinstance(result, dict):

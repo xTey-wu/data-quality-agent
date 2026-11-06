@@ -14,6 +14,7 @@ from unittest.mock import Mock, patch
 import dqagent
 from dqagent.engine import PLAN_SCHEMA, _usage_summary, _validate_arguments, run_agent
 from dqagent.providers import ChatCompletionsProvider, MockProvider, ProviderError, ProviderResponse
+from dqagent.schema import plan_signature
 
 
 def plan(name="candidate", parser="semantic"):
@@ -139,7 +140,8 @@ class AgentTests(unittest.TestCase):
 
     def test_candidate_budget_still_responds_to_all_calls(self):
         provider = ScriptedProvider([{"role": "assistant", "content": None, "tool_calls": [
-            tool_call(f"call_{index}", plan(f"candidate_{index}")) for index in range(6)
+            tool_call(f"call_{index}", {**plan(f"candidate_{index}"), "deduplicate": index % 2 == 0})
+            for index in range(6)
         ]}])
         with tempfile.TemporaryDirectory() as directory, fake_tools() as evaluate:
             summary = run_agent(object(), object(), directory, provider=provider, max_candidates=2)
@@ -149,6 +151,25 @@ class AgentTests(unittest.TestCase):
             self.assertEqual(len(responses), 6)
             self.assertIn(responses[-1]["result"]["error"]["code"], {"candidate_budget", "tool_budget"})
             self.assertEqual(summary["termination"], "candidate_budget")
+
+    def test_duplicate_plan_consumes_only_a_tool_action(self):
+        first = plan("first")
+        repeat = {**first, "name": "renamed", "reason": "相同参数，另一种说明。",
+                  "add_missing_indicators": False, "threshold_policy": "fixed"}
+        changed = {**repeat, "threshold_policy": "validation_macro_f1"}
+        provider = ScriptedProvider([{"role": "assistant", "content": None, "tool_calls": [
+            tool_call("first", first), tool_call("repeat", repeat), tool_call("changed", changed),
+        ]}])
+        with tempfile.TemporaryDirectory() as directory, fake_tools() as evaluate:
+            summary = run_agent(object(), object(), directory, provider=provider, max_candidates=2)
+            events = [json.loads(line) for line in (Path(directory) / "trace.jsonl").read_text().splitlines()]
+            repeated = next(event["result"] for event in events if event.get("tool_call_id") == "repeat")
+            self.assertEqual(repeated["error"]["code"], "duplicate_plan")
+            self.assertEqual(repeated["duplicate_of_attempt"], 1)
+            self.assertEqual(repeated["remaining_candidates"], 1)
+            self.assertEqual(evaluate.call_count, 2)
+            self.assertEqual(summary["budgets"]["candidate_attempts"], 2)
+            self.assertEqual(summary["budgets"]["tool_actions_processed"], 3)
 
     def test_no_valid_plan_is_failure_and_clears_stale_selected_plan(self):
         provider = ScriptedProvider([{"role": "assistant", "content": "I cannot select a plan."}])
@@ -286,7 +307,7 @@ class ProviderTests(unittest.TestCase):
                 score=0.9, retained=third["name"])
             self.assertEqual(fourth["numeric_imputation"], "mean")
             self.assertEqual(fourth["categorical_imputation"], third["categorical_imputation"])
-            signatures = {provider._signature(candidate) for candidate in (first, second, third, fourth)}
+            signatures = {plan_signature(candidate) for candidate in (first, second, third, fourth)}
             self.assertEqual(len(signatures), 4)
             branches.append(third)
         self.assertNotEqual(branches[0]["class_weight"], branches[1]["class_weight"])

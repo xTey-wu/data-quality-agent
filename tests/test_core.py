@@ -293,6 +293,46 @@ def test_training_statistics_and_export_use_same_pre_imputation_duplicate_rule()
     assert cleaner.numeric_fill_["balance"] == 10
 
 
+@pytest.mark.parametrize("options", [
+    {},
+    {"outlier_policy": "iqr_clip", "numeric_imputation": "mean", "add_missing_indicators": True},
+    {"outlier_policy": "keep", "deduplicate": False, "categorical_imputation": "most_frequent"},
+])
+def test_fit_transform_reuses_preparation_and_matches_separate_fit_transform(monkeypatch, options):
+    training = table(32)
+    training.loc[0, "age"] = "-12"
+    training.loc[1, "pdays"] = ""
+    training.loc[2, "contact"] = ""
+    training.loc[3, "balance"] = "€100,000"
+    training.loc[4, "age"] = "24 years"
+    duplicate = training.iloc[[1]].copy()
+    duplicate[ROW_ID] = "row-999999999"
+    duplicate["job"] = "  ADMIN.  "
+    duplicate["duration"] = "unavailable"
+    training = pd.concat([duplicate, training.iloc[::-1]], ignore_index=True)
+    original = training.copy(deep=True)
+    plan = {**DEFAULT_PLAN, **options}
+
+    separate = Cleaner(plan).fit(training)
+    assert separate.last_changes_ == {}
+    expected = separate.transform(training, training=True)
+
+    combined = Cleaner(plan)
+    preparation_steps = []
+    for name in ("_convert", "_training_rows", "_outliers"):
+        step = Mock(wraps=getattr(combined, name))
+        monkeypatch.setattr(combined, name, step)
+        preparation_steps.append(step)
+    result = combined.fit_transform(training)
+
+    pd.testing.assert_frame_equal(result, expected)
+    pd.testing.assert_frame_equal(training, original)
+    assert combined.description() == separate.description()
+    assert combined.last_changes_ == separate.last_changes_
+    for step in preparation_steps:
+        step.assert_called_once()
+
+
 def test_invalid_range_policy_and_no_label_mutation():
     training = table()
     training.loc[0, "age"] = "-12"

@@ -224,7 +224,7 @@ class Cleaner:
         changes["clipped_legal_fraction"] = changes["clipped_legal_cells"] / max(1, changes["legal_numeric_cells"])
         return result, changes
 
-    def fit(self, train_df: pd.DataFrame) -> "Cleaner":
+    def _fit_training(self, train_df: pd.DataFrame) -> tuple[pd.DataFrame, dict]:
         converted = self._training_rows(self._convert(train_df))
         if self.plan["outlier_policy"] == "iqr_clip":
             for column in MODEL_NUMERIC:
@@ -237,7 +237,7 @@ class Cleaner:
                 width = float(q3 - q1)
                 if width > 0:
                     self.iqr_bounds_[column] = [float(q1 - 1.5 * width), float(q3 + 1.5 * width)]
-        converted, _ = self._outliers(converted)
+        converted, changes = self._outliers(converted)
         for column in MODEL_NUMERIC:
             values = converted[column]
             statistic = values.median() if self.plan["numeric_imputation"] == "median" else values.mean()
@@ -247,16 +247,22 @@ class Cleaner:
             self.categorical_fill_[column] = (
                 str(mode.iloc[0]) if self.plan["categorical_imputation"] == "most_frequent" and len(mode)
                 else "unknown")
+        return converted, changes
+
+    def fit(self, train_df: pd.DataFrame) -> "Cleaner":
+        self._fit_training(train_df)
         return self
 
     def transform(self, df: pd.DataFrame, training: bool = False) -> pd.DataFrame:
         if not self.numeric_fill_:
             raise ValueError("Cleaner must be fitted on training data before transform.")
         normalized = self._convert(df, inference=not training)
-        before = len(normalized)
         if training:
             normalized = self._training_rows(normalized)
         converted, changes = self._outliers(normalized)
+        return self._finish_transform(converted, changes, len(df))
+
+    def _finish_transform(self, converted: pd.DataFrame, changes: dict, rows_before: int) -> pd.DataFrame:
         if self.plan["add_missing_indicators"]:
             for column, indicator in zip(MODEL_FEATURES, self.missing_indicator_columns_):
                 converted[indicator] = converted[column].isna().astype("int8")
@@ -266,14 +272,15 @@ class Cleaner:
             converted[column] = converted[column].fillna(value)
         for column, value in self.categorical_fill_.items():
             converted[column] = converted[column].fillna(value)
-        changes["duplicates_removed"] = before - len(converted)
-        changes["rows_before"] = before
+        changes["duplicates_removed"] = rows_before - len(converted)
+        changes["rows_before"] = rows_before
         changes["rows_after"] = len(converted)
         self.last_changes_ = changes
         return converted.reset_index(drop=True)
 
     def fit_transform(self, train_df: pd.DataFrame) -> pd.DataFrame:
-        return self.fit(train_df).transform(train_df, training=True)
+        converted, changes = self._fit_training(train_df)
+        return self._finish_transform(converted, changes, len(train_df))
 
     def description(self) -> dict:
         return {"plan": self.plan, "numeric_fill": self.numeric_fill_,

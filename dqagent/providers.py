@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from .schema import plan_signature
+
 
 class ProviderError(RuntimeError):
     """An intentionally sanitized error: never include HTTP response bodies."""
@@ -54,13 +56,6 @@ class MockProvider:
             "pricing": {"input_per_million": None, "output_per_million": None, "currency": None},
         }
 
-    @staticmethod
-    def _signature(plan: dict) -> str:
-        actions = {key: value for key, value in plan.items() if key not in {"name", "reason"}}
-        actions.setdefault("add_missing_indicators", False)
-        actions.setdefault("threshold_policy", "fixed")
-        return json.dumps(actions, sort_keys=True, ensure_ascii=False)
-
     def complete(self, messages: list[dict], tools: list[dict]) -> ProviderResponse:
         del tools
         profile, budget, call_plans, feedback = None, 4, {}, []
@@ -91,11 +86,12 @@ class MockProvider:
                         feedback.append((previous, result))
                 except (ValueError, TypeError, AttributeError):
                     pass
-        seen = {self._signature(plan) for plan in self._issued}
+        seen = {plan_signature(plan) for plan in self._issued}
         for previous in call_plans.values():
-            if self._signature(previous) not in seen:
+            signature = plan_signature(previous)
+            if signature not in seen:
                 self._issued.append(copy.deepcopy(previous))
-                seen.add(self._signature(previous))
+                seen.add(signature)
         if len(self._issued) >= budget:
             return ProviderResponse({"role": "assistant", "content": "离线规则模拟预算已用完；保留通过检查的最佳方案。"})
 
@@ -159,7 +155,7 @@ class MockProvider:
             candidate = {"add_missing_indicators": True, "threshold_policy": "validation_macro_f1", **candidate}
             normalized_options.append((candidate, reason))
         selected = next(((candidate, reason) for candidate, reason in normalized_options
-                         if self._signature(candidate) not in seen), None)
+                         if plan_signature(candidate) not in seen), None)
         if selected is None:
             return ProviderResponse({"role": "assistant", "content": "离线规则模拟没有未重复的受控候选；保留已有结果。"})
         plan, reason = selected
