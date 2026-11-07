@@ -52,10 +52,12 @@ class _PresetSearchProvider(MockProvider):
 
 
 def run_experiment(data_dir, output_dir, *, mode="mock", config=None, provider_profile="qwen", seed=42,
-                   compare=False) -> dict:
+                   compare=False, guided=None) -> dict:
     data_dir, output_dir = Path(data_dir), Path(output_dir)
     if mode not in {"mock", "api"}:
         raise ValueError("mode must be mock or api")
+    if guided is None:
+        guided = mode == "api"
     if output_dir.exists() and any(output_dir.iterdir()):
         raise ValueError("结果目录已有文件，请换一个新目录，避免覆盖之前的实验。")
     required = ["train_dirty.csv", "validation.csv", "test.csv", "metadata.json"]
@@ -87,7 +89,7 @@ def run_experiment(data_dir, output_dir, *, mode="mock", config=None, provider_p
     }
     # This call cannot access the test, reference data, or synthetic answer manifest.
     planning_started = time.perf_counter()
-    agent = run_agent(train, validation, output_dir / "agent", provider=provider, seed=seed)
+    agent = run_agent(train, validation, output_dir / "agent", provider=provider, seed=seed, guided=guided)
     info["agent"] = agent
     info["agent_planning_seconds"] = round(time.perf_counter() - planning_started, 3)
     info["execution"]["real_model_status"] = agent["real_model_validation"]

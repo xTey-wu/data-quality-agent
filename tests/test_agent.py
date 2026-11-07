@@ -46,8 +46,9 @@ def evaluation(train, val, candidate, seed=42):
 
 
 @contextmanager
-def fake_tools(evaluator=evaluation):
-    quality = types.SimpleNamespace(profile=lambda frame: {"rows": 10}, validate_plan=lambda candidate: candidate)
+def fake_tools(evaluator=evaluation, training_profile=None):
+    quality = types.SimpleNamespace(profile=lambda frame: training_profile or {"rows": 10},
+                                    validate_plan=lambda candidate: candidate)
     modeling = types.SimpleNamespace(evaluate_plan=Mock(side_effect=evaluator))
     with patch.object(dqagent, "quality", quality, create=True), patch.object(dqagent, "modeling", modeling, create=True):
         yield modeling.evaluate_plan
@@ -85,13 +86,36 @@ class AgentTests(unittest.TestCase):
         legacy = _validate_arguments(json.dumps({"plan": plan()}))
         self.assertFalse(legacy["add_missing_indicators"])
         self.assertEqual(legacy["threshold_policy"], "fixed")
+        self.assertEqual(legacy["classifier"], "logistic_regression")
         self.assertNotIn("add_missing_indicators", PLAN_SCHEMA["required"])
         self.assertNotIn("threshold_policy", PLAN_SCHEMA["required"])
+        self.assertNotIn("classifier", PLAN_SCHEMA["required"])
         extended = _validate_arguments(json.dumps({"plan": {**plan(), "add_missing_indicators": True,
                                                            "threshold_policy": "validation_macro_f1"}}))
         self.assertTrue(extended["add_missing_indicators"])
         with self.assertRaises(ValueError):
             _validate_arguments(json.dumps({"plan": {**plan(), "add_missing_indicators": 1}}))
+
+    def test_guided_search_recovers_tool_call_and_compares_effective_candidates(self):
+        conflicted = {**plan("conflicted", parser="strict"), "outlier_policy": "keep"}
+        alternate = {**plan("tree"), "classifier": "hist_gradient_boosting"}
+        provider = ScriptedProvider([
+            {"role": "assistant", "content": "先评估候选。"},
+            {"role": "assistant", "tool_calls": [tool_call("first", conflicted)]},
+            {"role": "assistant", "tool_calls": [tool_call("duplicate", plan("duplicate")), tool_call("tree", alternate)]},
+        ])
+        training = {"rows": 10, "fields": {"age": {"strict_parse_errors": 2, "invalid_range": 1}}}
+        with tempfile.TemporaryDirectory() as directory, fake_tools(training_profile=training) as evaluate:
+            summary = run_agent(object(), object(), directory, provider=provider, guided=True, max_candidates=2)
+            self.assertTrue(summary["tool_call_reminder_sent"])
+            self.assertIn("evaluate_plan", provider.received[1][-1]["content"])
+            self.assertEqual(summary["budgets"]["tool_calls_received"], 3)
+            self.assertEqual(evaluate.call_count, 2)
+            first, second = summary["candidates"]
+            self.assertEqual(set(first["plan_adjustments"]), {"numeric_parser", "outlier_policy", "threshold_policy"})
+            self.assertEqual(first["plan"]["outlier_policy"], "invalid_to_missing")
+            self.assertEqual(second["plan"]["classifier"], "hist_gradient_boosting")
+            self.assertEqual(summary["best_decision_threshold"], 0.42)
 
     def test_tuned_plan_without_validation_threshold_is_rejected(self):
         tuned = {**plan(), "threshold_policy": "validation_macro_f1"}

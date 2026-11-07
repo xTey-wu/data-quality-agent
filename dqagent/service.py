@@ -19,6 +19,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from . import modeling, quality
 from .data import load_table
+from .guidance import guide_plan, training_guidance
 from .schema import CATEGORICAL, MODEL_FEATURES, MODEL_NUMERIC, TARGET, plan_signature
 
 
@@ -36,6 +37,7 @@ class CleaningPlan(BaseModel):
     reason: Annotated[str, Field(min_length=1, max_length=1200)]
     add_missing_indicators: bool = False
     threshold_policy: Literal["fixed", "validation_macro_f1"] = "fixed"
+    classifier: Literal["logistic_regression", "hist_gradient_boosting"] = "logistic_regression"
 
 
 def _now() -> str:
@@ -180,7 +182,8 @@ class CleaningService:
         """Return training quality and the prediction schema; never read held-out answers."""
         try:
             train = load_table(self._data_path("train_dirty.csv"))
-            result = self._envelope(ok=True, training_profile=prediction_profile(quality.profile(train)),
+            training = prediction_profile(quality.profile(train))
+            result = self._envelope(ok=True, training_profile=training, guidance=training_guidance(training),
                 prediction_schema={"features": MODEL_FEATURES, "numeric": MODEL_NUMERIC,
                                    "categorical": CATEGORICAL, "target": TARGET},
                 maximum_candidates=self.MAX_CANDIDATES,
@@ -192,11 +195,11 @@ class CleaningService:
         except (ValueError, TypeError, KeyError, OSError):
             return self._failure(ServiceError("invalid_training_data", "训练数据无法检查，请核对数据格式。"))
 
-    def start_cleaning_run(self) -> dict:
+    def start_cleaning_run(self, guided: bool = False) -> dict:
         """Create a new persistent run with a fixed four-candidate budget."""
         try:
             train, validation, hashes = self._training_inputs()
-            quality.profile(train)
+            training = quality.profile(train)
             if not len(validation):
                 raise ServiceError("invalid_validation_data", "验证集不能为空。")
             for _ in range(5):
@@ -214,8 +217,11 @@ class CleaningService:
                      "candidates": [], "best_plan": None, "best_validation": None, "best_decision_threshold": None,
                      "input_sha256": hashes, "artifacts": ["state.json", "trace.jsonl"],
                      "execution_mode": "host_tool_execution", "internal_model_calls": 0}
+            if guided:
+                state["guidance"] = training_guidance(prediction_profile(training))
             self._atomic_json(run_dir / "state.json", state)
-            self._trace("start_cleaning_run", run_dir=run_dir, run_id=run_id, input_sha256=hashes)
+            self._trace("start_cleaning_run", run_dir=run_dir, run_id=run_id, input_sha256=hashes,
+                        guidance=state.get("guidance"))
             return self._public_status(state)
         except ServiceError as error:
             return self._failure(error)
@@ -241,11 +247,13 @@ class CleaningService:
                     self._trace("candidate_rejected", run_dir=run_dir, attempt=state["candidate_attempts"],
                                 reason="invalid_plan_schema")
                     return self._failure(ServiceError("invalid_plan", "计划不符合允许的字段、长度或枚举约束。"), run_dir=run_dir)
+                candidate, adjustments = guide_plan(candidate, state.get("guidance"))
                 signature = plan_signature(candidate)
                 for previous in state["candidates"]:
                     if plan_signature(previous["plan"]) == signature:
                         return self._failure(ServiceError("duplicate_plan", "这些处理参数已评估，可查询原候选或更换参数。"),
                                              run_dir=run_dir, duplicate_of_attempt=previous["attempt"],
+                                             plan_adjustments=adjustments,
                                              remaining_candidates=state["max_candidates"] - state["candidate_attempts"])
                 state["candidate_attempts"] += 1
                 self._atomic_json(run_dir / "state.json", state)
@@ -266,6 +274,7 @@ class CleaningService:
                 selected = passed and (previous_score is None or score > previous_score)
                 decision = "selected" if selected else "not_selected" if passed else "rejected"
                 summary = {"attempt": state["candidate_attempts"], "plan": candidate,
+                           "plan_adjustments": adjustments,
                            "ok": bool(result.get("ok")), "decision": decision,
                            "validation": result.get("validation"), "guardrails": result.get("guardrails"),
                            "decision_threshold": float(threshold) if valid_threshold else None,
@@ -296,6 +305,7 @@ class CleaningService:
             "run_id", "status", "created_at_utc", "candidate_attempts", "max_candidates", "candidates",
             "best_plan", "best_validation", "artifacts", "final_metrics", "finalization_error",
             "best_decision_threshold", "frozen_decision_threshold",
+            "guidance",
         ) if key in state}
         visible["remaining_candidates"] = max(0, state["max_candidates"] - state["candidate_attempts"])
         return self._envelope(ok=True, **visible)

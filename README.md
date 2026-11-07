@@ -31,19 +31,22 @@ python -m dqagent.mcp_server --data-dir data/prepared --runs-dir runs
 ### 工具调用流程
 
 1. `inspect_training_data`：读取训练质量画像和15个建模字段的说明。
-2. `start_cleaning_run`：创建独立运行，获得 `run_id`。
+2. 调用 `start_cleaning_run(guided=true)` 创建独立运行，获得 `run_id` 和基于训练画像的建议方案。
 3. `evaluate_cleaning_plan`：传入运行标识和白名单方案，执行训练处理与验证评价。
 4. 根据反馈调整候选；`get_run_status` 查看已保留方案。
 5. `finalize_cleaning_run`：锁定最佳方案后执行最终测试并导出文件。
 
 工具的实际参数由 MCP 的 `tools/list` 返回。计划字段包括：数值解析方式、数值和类别填补方法、异常处理、训练去重和类别权重。所有方法均来自有限枚举，不能传入任意代码、表达式或文件路径。
 
-两个可选字段可用于比较预测策略，省略时保持已有计划行为：
+以下可选字段可用于比较预测策略。
 
 | 字段 | 默认值 | 作用 |
 |---|---|---|
 | `add_missing_indicators` | `false` | 开启后生成15个缺失标记，区分原始缺失、被修复的非法值与真实业务状态 |
 | `threshold_policy` | `fixed` | `fixed` 使用0.5；`validation_macro_f1` 只在验证集的19个预设阈值中选优 |
+| `classifier` | `logistic_regression` | 可选逻辑回归或 `hist_gradient_boosting`，每个候选训练一种模型 |
+
+引导模式用训练画像修正已知解析和范围冲突，对所有候选统一使用验证集 Macro-F1 选阈值。工具在 `plan_adjustments` 中返回请求值与生效值，并按生效方案去重。先评估画像建议的起点，再比较分类器或单项处理策略。直接调用 `start_cleaning_run()` 时，按候选指定的字段执行，省略分类器与阈值策略时使用逻辑回归和0.5阈值。
 
 真实 `unknown` 和合法 `pdays=-1` 不标为缺失。开启标记时使用15个原始预测字段与15个派生字段。原有8字段请求及已有固定阈值运行状态继续有效。
 
@@ -85,7 +88,7 @@ python -m dqagent run --mode mock --output runs/my-offline-run
 python -m dqagent run --mode mock --compare --output runs/my-comparison
 ```
 
-离线规则搜索根据训练画像选择初始策略，再依据工具反馈逐项比较类别权重、类别填补和数值填补，避免重复方案。类别加权与异常裁剪独立设置。真实大模型效果尚未测试；下表分类指标来自实际逻辑回归训练。
+下表记录历史离线对照。规则搜索根据训练画像选择起点，再依据工具反馈逐项比较类别权重、类别填补和数值填补。分类指标来自实际逻辑回归训练。
 
 | 方案 | 阈值 | 测试 Macro-F1 | 正类召回 | 正类精确率 | AP |
 |---|---:|---:|---:|---:|---:|
@@ -103,6 +106,22 @@ python -m dqagent run --mode mock --compare --output runs/my-comparison
 
 初始结果见 `examples/offline-run/`；完整优化对照、冻结阈值与两种搜索的轨迹见 `examples/optimized-run/`。每次实际运行导出 `frozen_plans.json` 和 `frozen_thresholds.json`，两者均在测试集读取前写入。规划耗时、搜索控制耗时和最终训练评测耗时分开记录。完整数据、处理产物与模型可通过准备和运行命令重建。
 
+### 分类器和误报对照
+
+```bash
+python scripts/benchmark_guided.py --data data/prepared --seed 42 --output runs/guided-benchmark-42
+```
+
+脚本回放真实工具调用实验选出的历史方案，分别检查阈值、分类器和四候选搜索的影响。验证结果、方案和阈值均在首次读取测试集前写入。使用 `prepare` 分别生成种子137和251的数据即可复跑另外两组。同源数据的重新划分用于检查结果稳定性。
+
+| 种子 | 预设搜索测试 Macro-F1 | 引导规则搜索测试 Macro-F1 | 逻辑回归测试召回 / 误报率 | 梯度提升树测试召回 / 误报率 |
+|---|---:|---:|---:|---:|
+| 42 | 0.6888 | 0.7041 | 43.67% / 7.20% | 47.83% / 6.94% |
+| 137 | 0.6753 | 0.7023 | 40.74% / 7.12% | 47.92% / 6.92% |
+| 251 | 0.6913 | 0.7116 | 42.34% / 6.50% | 47.73% / 6.68% |
+
+最后两列固定清洗方案，分别在验证集用7%的误报率上限选取召回最高的阈值，再报告测试结果。搜索两列各评估四个候选，按验证 Macro-F1 选阈值和方案。种子42的历史实测方案复现了测试 Macro-F1 0.6173，统一验证阈值后为0.6835。本表是离线回归与规则搜索结果。
+
 ## 原生 Function Calling 实验
 
 `config/models.example.json` 提供 Qwen3.7-Plus（北京）和 DeepSeek Flash 配置。密钥只从本机环境变量读取，配置文件与日志不保存密钥。
@@ -115,7 +134,7 @@ python scripts/run_real_model.py --provider deepseek
 
 也可复制配置为被Git忽略的 `config/models.local.json`，再用 `--config` 指定。正式实验优先锁定控制台可调用的快照，记录服务端返回的实际型号。Qwen地址与密钥地域须一致，支持官方北京工作区域名。
 
-实验器记录完整提示、模型参数、工具参数和结果、错误、重试次数及返回用量，最多8轮决策和有限HTTP重试。未知价格保留为空；存在重试时总费用未知，另报已知成功响应的估价。使用MCP宿主时，服务端记录工具轨迹，完整模型提示、Token和费用由宿主日志补齐。
+实验器默认采用引导模式。使用 `python -m dqagent run --mode api --no-guided` 可按候选的原始参数评估。模型在引导模式下评估首个候选前只返回文字时，实验器在轮次预算内追加一次工具调用提醒。记录包括提示、模型参数、工具参数和结果、错误、重试次数及返回用量。最多8轮决策，并有HTTP重试上限。未知价格保留为空。存在重试时，已知成功响应的估价单独报告。使用MCP宿主时，服务端记录工具轨迹，完整模型提示、Token和费用由宿主日志补齐。
 
 ## 项目结构
 

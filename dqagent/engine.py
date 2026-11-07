@@ -9,23 +9,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .guidance import guide_plan, training_guidance
 from .providers import MockProvider, ProviderError
-from .schema import CATEGORICAL, MODEL_FEATURES, MODEL_NUMERIC, TARGET, plan_signature
+from .schema import (CATEGORICAL, MODEL_FEATURES, MODEL_NUMERIC, OPTIONAL_PLAN_DEFAULTS,
+                     PLAN_OPTIONS as SCHEMA_PLAN_OPTIONS, TARGET, plan_signature)
 
 
-PLAN_OPTIONS = {
-    "numeric_parser": ["strict", "semantic"],
-    "numeric_imputation": ["median", "mean"],
-    "categorical_imputation": ["unknown", "most_frequent"],
-    "outlier_policy": ["keep", "invalid_to_missing", "iqr_clip"],
-    "class_weight": ["none", "balanced"],
-    "threshold_policy": ["fixed", "validation_macro_f1"],
-}
-OPTIONAL_PLAN_DEFAULTS = {"add_missing_indicators": False, "threshold_policy": "fixed"}
+PLAN_OPTIONS = {key: sorted(values) for key, values in SCHEMA_PLAN_OPTIONS.items()}
 PLAN_SCHEMA = {
     "type": "object", "properties": {
         "name": {"type": "string", "maxLength": 120},
-        **{key: {"type": "string", "enum": values} for key, values in PLAN_OPTIONS.items()},
+        **{key: {"type": "string", "enum": values,
+                 **({"default": OPTIONAL_PLAN_DEFAULTS[key]} if key in OPTIONAL_PLAN_DEFAULTS else {})}
+           for key, values in PLAN_OPTIONS.items()},
         "deduplicate": {"type": "boolean"},
         "add_missing_indicators": {"type": "boolean", "default": False},
         "reason": {"type": "string", "maxLength": 1200},
@@ -52,8 +48,10 @@ SYSTEM_PROMPT = """你是数据质量处理智能体。根据训练数据的统�
 每个计划给出简短、可核查的选择依据。达到预算时停止并概述结果。你不需要也不应输出内部思维过程。"""
 SYSTEM_PROMPT += """
 add_missing_indicators可保留原始缺失位置供分类使用；省略时为false。
-threshold_policy可选fixed（0.5）或validation_macro_f1（只在验证集选择阈值，定稿后锁定）。
-优先比较至少两个合法候选，单独比较balanced权重，不与激进裁剪捆绑；不重复相同参数组合。"""
+classifier可选logistic_regression或hist_gradient_boosting，每个候选只训练一种模型。
+若给出guidance，从recommended_plan开始。工具会按画像修复已知的解析与非法范围冲突，统一在验证集上选择阈值，并返回生效的方案及调整记录。优先用另一个候选只切换分类器。
+其他情况下threshold_policy可选fixed（0.5）或validation_macro_f1（只在验证集选择阈值）。
+保护合法的pdays=-1和负余额，已知超出字段范围的值可以转为缺失。比较时尽量一次只改变一项设置。"""
 
 
 def _json_safe(value: Any) -> Any:
@@ -171,7 +169,8 @@ def _usage_summary(records: list[dict], info: dict, retries: int) -> dict:
     }
 
 
-def run_agent(train_df, val_df, output_dir, provider=None, seed=42, max_candidates=4, max_rounds=8) -> dict:
+def run_agent(train_df, val_df, output_dir, provider=None, seed=42, max_candidates=4, max_rounds=8,
+              *, guided=False) -> dict:
     """Run without test/reference/manifest inputs; default is a labeled offline mock."""
     from . import modeling, quality
 
@@ -179,6 +178,8 @@ def run_agent(train_df, val_df, output_dir, provider=None, seed=42, max_candidat
         raise ValueError("max_candidates 必须是 1—4 的整数。")
     if type(max_rounds) is not int or not 1 <= max_rounds <= 8:
         raise ValueError("max_rounds 必须是 1—8 的整数。")
+    if type(guided) is not bool:
+        raise ValueError("guided 必须是布尔值。")
     provider = provider if provider is not None else MockProvider()
     info = provider.describe()
     max_tool_actions = max_candidates * 2
@@ -191,11 +192,13 @@ def run_agent(train_df, val_df, output_dir, provider=None, seed=42, max_candidat
     # A rerun must not expose a selected plan left by an earlier successful run.
     # The artifact remains present, with null, until this run has a valid candidate.
     selected_path.write_text("null\n", encoding="utf-8")
+    training = _planner_profile(quality.profile(train_df))
+    guidance = training_guidance(training) if guided else None
     messages = [
         {"role": "system", "content": SYSTEM_PROMPT},
         {"role": "user", "content": json.dumps(_json_safe({
             "task": "检查训练数据并提出可验证的数据预处理方案。",
-            "training_profile": _planner_profile(quality.profile(train_df)), "seed": seed,
+            "training_profile": training, "seed": seed, "guidance": guidance,
             "prediction_schema": {"features": MODEL_FEATURES, "numeric": MODEL_NUMERIC,
                                   "categorical": CATEGORICAL, "target": TARGET},
             "max_candidates": max_candidates,
@@ -209,6 +212,7 @@ def run_agent(train_df, val_df, output_dir, provider=None, seed=42, max_candidat
     rounds, retries, provider_calls, model_calls = 0, 0, 0, 0
     candidate_attempts, tool_calls_received, tool_actions_processed, invalid_tool_calls = 0, 0, 0, 0
     termination, provider_error = "round_budget", None
+    tool_call_reminder_sent = False
     trace_handle = trace_path.open("w", encoding="utf-8")
 
     def record(event: str, **details):
@@ -220,7 +224,8 @@ def run_agent(train_df, val_df, output_dir, provider=None, seed=42, max_candidat
         trace_handle.flush()
 
     try:
-        record("run_start", provider=info, seed=seed, max_candidates=max_candidates, max_rounds=max_rounds,
+        record("run_start", provider=info, seed=seed, guidance=guidance,
+               max_candidates=max_candidates, max_rounds=max_rounds,
                max_tool_actions=max_tool_actions,
                max_http_requests=max_http_requests,
                warning="离线规则模拟，不代表真实大模型实验结果。" if not info.get("is_real_model") else None)
@@ -256,6 +261,11 @@ def run_agent(train_df, val_df, output_dir, provider=None, seed=42, max_candidat
             record("model_response", round=round_index, assistant=message, usage=response.usage, retries=response.retries)
             calls = message.get("tool_calls") or []
             if not calls:
+                if guided and not candidates and not tool_call_reminder_sent and round_index < max_rounds:
+                    tool_call_reminder_sent = True
+                    messages.append({"role": "user", "content": "请实际调用 evaluate_plan 提交一个候选，再根据验证结果继续。"})
+                    record("tool_call_reminder", round=round_index, reason="no_candidate_evaluated")
+                    continue
                 termination = "model_finished"
                 break
             for call in calls:
@@ -282,10 +292,12 @@ def run_agent(train_df, val_df, output_dir, provider=None, seed=42, max_candidat
                         invalid_tool_calls += 1
                         result = {"ok": False, "error": {"code": "invalid_arguments", "message": "方案参数不符合白名单结构或枚举约束。"}}
                     else:
+                        plan, adjustments = guide_plan(plan, guidance)
                         signature = plan_signature(plan)
                         if signature in evaluated_attempts:
                             result = {"ok": False, "error": {"code": "duplicate_plan", "message": "这些处理参数已评估，请更换参数。"},
                                       "duplicate_of_attempt": evaluated_attempts[signature],
+                                      "plan_adjustments": adjustments,
                                       "remaining_candidates": max_candidates - candidate_attempts}
                     if result is None:
                         candidate_attempts += 1
@@ -308,6 +320,7 @@ def run_agent(train_df, val_df, output_dir, provider=None, seed=42, max_candidat
                             "index": len(candidates) + 1, "plan": plan, "ok": bool(result.get("ok")),
                             "guardrails": result.get("guardrails", {"passed": False, "reasons": ["缺少硬约束结果。"]}),
                             "validation": result.get("validation"), "error": result.get("error"),
+                            "plan_adjustments": adjustments,
                             "decision_threshold": threshold, "threshold_selection": result.get("threshold_selection"),
                             "decision": "selected" if selected else "rejected" if score is None else "not_selected",
                         }
@@ -323,6 +336,7 @@ def run_agent(train_df, val_df, output_dir, provider=None, seed=42, max_candidat
                                 record("rollback", rejected_plan=plan["name"], retained_plan=best["plan"]["name"],
                                        reason="候选未通过硬约束或未超过已保留方案的验证 macro_f1。")
                         result = {**result, "agent_decision": entry["decision"],
+                                  "plan_adjustments": adjustments,
                                   "remaining_candidates": max_candidates - candidate_attempts,
                                   "retained_plan": best["plan"]["name"] if best else None}
                 # Every returned tool call receives a response, including rejected and over-budget calls.
@@ -346,7 +360,8 @@ def run_agent(train_df, val_df, output_dir, provider=None, seed=42, max_candidat
                 "failed_or_partial" if info.get("is_real_model") and provider_error and model_calls else
                 "executed" if info.get("is_real_model") and usage_records else "not_run"
             ),
-            "seed": seed, "rounds": rounds, "provider_calls": provider_calls,
+            "seed": seed, "guidance": guidance, "tool_call_reminder_sent": tool_call_reminder_sent,
+            "rounds": rounds, "provider_calls": provider_calls,
             "model_calls": model_calls,
             "successful_model_responses": len(usage_records) if info.get("is_real_model") else 0,
             "budgets": {"max_candidates": max_candidates, "max_rounds": max_rounds,

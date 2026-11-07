@@ -58,13 +58,15 @@ class MockProvider:
 
     def complete(self, messages: list[dict], tools: list[dict]) -> ProviderResponse:
         del tools
-        profile, budget, call_plans, feedback = None, 4, {}, []
+        profile, recommended, budget, call_plans, feedback = None, None, 4, {}, []
         for message in messages:
             if message.get("role") == "user":
                 try:
                     payload = json.loads(message.get("content", ""))
                     if isinstance(payload.get("training_profile"), dict):
                         profile = payload["training_profile"]
+                    if isinstance(payload.get("guidance"), dict):
+                        recommended = payload["guidance"].get("recommended_plan")
                     requested = payload.get("max_candidates", 4)
                     if type(requested) is int:
                         budget = max(1, min(requested, 4))
@@ -115,6 +117,8 @@ class MockProvider:
             "class_weight": "none", "add_missing_indicators": True,
             "threshold_policy": "validation_macro_f1",
         }
+        if recommended:
+            base = {key: value for key, value in recommended.items() if key not in {"name", "reason"}}
         valid_feedback = [(plan, result) for plan, result in feedback
                           if result.get("ok") and result.get("guardrails", {}).get("passed")
                           and isinstance((result.get("validation") or {}).get("macro_f1"), (int, float))]
@@ -141,9 +145,12 @@ class MockProvider:
             options.append((base, "根据训练画像选择解析、缺失与去重策略。"))
         elif feedback:
             # Once an axis has been compared, spend the next slot on another axis.
-            for key, choices in (("class_weight", ("none", "balanced")),
-                                 ("categorical_imputation", ("unknown", "most_frequent")),
-                                 ("numeric_imputation", ("median", "mean"))):
+            axes = [("class_weight", ("none", "balanced")),
+                    ("categorical_imputation", ("unknown", "most_frequent")),
+                    ("numeric_imputation", ("median", "mean"))]
+            if recommended:
+                axes.insert(0, ("classifier", ("logistic_regression", "hist_gradient_boosting")))
+            for key, choices in axes:
                 tested = {plan.get(key) for plan in self._issued}
                 if set(choices).issubset(tested):
                     continue

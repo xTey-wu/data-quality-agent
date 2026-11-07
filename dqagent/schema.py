@@ -23,11 +23,13 @@ PLAN_OPTIONS = {
     "outlier_policy": {"keep", "invalid_to_missing", "iqr_clip"},
     "class_weight": {"none", "balanced"},
     "threshold_policy": {"fixed", "validation_macro_f1"},
+    "classifier": {"logistic_regression", "hist_gradient_boosting"},
 }
 
 OPTIONAL_PLAN_DEFAULTS = {
     "add_missing_indicators": False,
     "threshold_policy": "fixed",
+    "classifier": "logistic_regression",
 }
 
 DEFAULT_PLAN = {

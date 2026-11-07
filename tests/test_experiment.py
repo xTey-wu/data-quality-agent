@@ -82,7 +82,7 @@ def test_controlled_comparison_uses_equal_budgets_and_single_change_plans(tmp_pa
                          ("test", table.iloc[100:])]:
         subset.to_csv(source / f"{name}.csv", index=False)
     (source / "metadata.json").write_text(json.dumps({"seed": 42}), encoding="utf-8")
-    result = run_experiment(source, output, compare=True)
+    result = run_experiment(source, output, compare=True, guided=True)
     assert result["status"] == "completed"
     rows = {row["id"]: row for row in result["results"]}
     assert set(rows) == {"minimal", "fixed", "previous", "indicators_only", "threshold_only", "preset_search", "agent"}
@@ -92,7 +92,10 @@ def test_controlled_comparison_uses_equal_budgets_and_single_change_plans(tmp_pa
         assert {name for name in previous if name not in {"name", "reason"} and previous[name] != modified[name]} == {field}
     assert result["preset_search"]["budgets"]["max_candidates"] == result["agent"]["budgets"]["max_candidates"] == 4
     assert sum(candidate["ok"] for candidate in result["preset_search"]["candidates"]) == 4
-    assert sum(candidate["ok"] for candidate in result["agent"]["candidates"]) >= 2
+    candidates = result["agent"]["candidates"]
+    assert len(candidates) == 4 and all(candidate["ok"] for candidate in candidates)
+    assert {candidate["plan"]["classifier"] for candidate in candidates} == {"logistic_regression", "hist_gradient_boosting"}
+    assert all(candidate["plan"]["threshold_policy"] == "validation_macro_f1" for candidate in candidates)
 
 
 def test_failed_search_control_marks_whole_comparison_incomplete(tmp_path, monkeypatch):

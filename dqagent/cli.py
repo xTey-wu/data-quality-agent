@@ -24,6 +24,8 @@ def main():
     run.add_argument("--config", type=Path, default=Path("config/models.example.json"))
     run.add_argument("--seed", type=int, default=42)
     run.add_argument("--compare", action="store_true", help="加入原方案、单项改动和等预算预设搜索对照")
+    run.add_argument("--guided", action=argparse.BooleanOptionalAction, default=None,
+                     help="按训练画像指导候选并统一验证阈值。API 模式默认开启")
     args = parser.parse_args()
     try:
         if args.command == "download":
@@ -38,7 +40,8 @@ def main():
             output = args.output or Path("runs") / (datetime.now().strftime("%Y%m%d-%H%M%S-%f") + "-" + args.mode)
             print("离线规则模拟：不调用大模型。" if args.mode == "mock" else "真实API模式：将调用所选模型并产生费用。")
             result = run_experiment(args.data, output, mode=args.mode, config=args.config,
-                                    provider_profile=args.provider, seed=args.seed, compare=args.compare)
+                                    provider_profile=args.provider, seed=args.seed, compare=args.compare,
+                                    guided=args.guided)
             print(json.dumps({"status": result["status"], "output": str(output), "model_calls": result["agent"]["model_calls"]}, ensure_ascii=False, indent=2))
             if result["status"] != "completed":
                 raise SystemExit(1)

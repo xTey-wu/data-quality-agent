@@ -63,14 +63,41 @@ def test_schema_rejects_arbitrary_actions_and_nonboolean_values():
 
 def test_extended_plan_fields_are_optional_and_strict():
     legacy = {key: value for key, value in DEFAULT_PLAN.items()
-              if key not in {"add_missing_indicators", "threshold_policy"}}
+              if key not in {"add_missing_indicators", "threshold_policy", "classifier"}}
     parsed = CleaningPlan.model_validate(legacy)
     assert parsed.add_missing_indicators is False
     assert parsed.threshold_policy == "fixed"
+    assert parsed.classifier == "logistic_regression"
     required = CleaningPlan.model_json_schema()["required"]
     assert "add_missing_indicators" not in required and "threshold_policy" not in required
+    assert "classifier" not in required
     with pytest.raises(ValidationError):
         CleaningPlan.model_validate({**legacy, "add_missing_indicators": 1})
+
+
+def test_guidance_persists_and_deduplicates_effective_plans(prepared):
+    data, runs = prepared
+    from dqagent.data import load_table
+    path = data / "train_dirty.csv"
+    train = load_table(path)
+    train.loc[1, "day"] = "99"
+    train.to_csv(path, index=False)
+    service = CleaningService(data, runs)
+    started = service.start_cleaning_run(guided=True)
+    run_id = started["run_id"]
+    assert started["guidance"]["recommended_plan"]["outlier_policy"] == "invalid_to_missing"
+
+    restarted = CleaningService(data, runs)
+    raw = {**DEFAULT_PLAN, "numeric_parser": "strict", "outlier_policy": "keep"}
+    candidate = restarted.evaluate_cleaning_plan(run_id, raw)["candidate"]
+    assert candidate["decision"] == "selected"
+    assert set(candidate["plan_adjustments"]) == {"numeric_parser", "outlier_policy", "threshold_policy"}
+    duplicate = restarted.evaluate_cleaning_plan(run_id, {**candidate["plan"], "name": "duplicate"})
+    assert duplicate["error"]["code"] == "duplicate_plan"
+    assert duplicate["remaining_candidates"] == 3
+    final = restarted.finalize_cleaning_run(run_id)
+    assert final["status"] == "finalized"
+    assert final["frozen_decision_threshold"] == candidate["decision_threshold"]
 
 
 def test_inspection_and_candidates_never_open_held_out_or_answer_files(prepared):
@@ -352,6 +379,7 @@ def test_stdio_protocol_initialize_tools_prompt_and_actual_workflow(prepared):
                                   if "numeric_parser" in value.get("properties", {}))
                 assert "add_missing_indicators" not in typed_plan["required"]
                 assert "threshold_policy" not in typed_plan["required"]
+                assert "classifier" not in typed_plan["required"]
                 prompt = await client.get_prompt("cleaning_workflow")
                 assert "finalize_cleaning_run" in prompt.messages[0].content.text
                 async def call(name, arguments=None):
@@ -363,15 +391,18 @@ def test_stdio_protocol_initialize_tools_prompt_and_actual_workflow(prepared):
                 assert inspection["training_profile"]["feature_count"] == 15
                 old_run = await call("start_cleaning_run")
                 old_plan = {key: value for key, value in DEFAULT_PLAN.items()
-                            if key not in {"add_missing_indicators", "threshold_policy"}}
+                            if key not in {"add_missing_indicators", "threshold_policy", "classifier"}}
                 old_candidate = await call("evaluate_cleaning_plan", {"run_id": old_run["run_id"], "plan": old_plan})
                 assert old_candidate["candidate"]["plan"]["threshold_policy"] == "fixed"
                 assert old_candidate["candidate"]["plan"]["add_missing_indicators"] is False
-                started = await call("start_cleaning_run")
+                started = await call("start_cleaning_run", {"guided": True})
+                assert started["guidance"]["recommended_plan"]["numeric_parser"] == "semantic"
                 run_id = started["run_id"]
-                tuned = {**DEFAULT_PLAN, "add_missing_indicators": True, "threshold_policy": "validation_macro_f1"}
+                tuned = {**DEFAULT_PLAN, "classifier": "hist_gradient_boosting", "add_missing_indicators": True}
                 candidate = await call("evaluate_cleaning_plan", {"run_id": run_id, "plan": tuned})
                 assert candidate["candidate"]["decision"] == "selected"
+                assert candidate["candidate"]["plan"]["classifier"] == "hist_gradient_boosting"
+                assert candidate["candidate"]["plan_adjustments"]["threshold_policy"]["effective"] == "validation_macro_f1"
                 threshold = candidate["candidate"]["decision_threshold"]
                 repeat = await call("evaluate_cleaning_plan", {"run_id": run_id, "plan": {**tuned, "name": "retry"}})
                 assert repeat["error"]["code"] == "duplicate_plan"

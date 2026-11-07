@@ -11,6 +11,7 @@ import joblib
 import numpy as np
 import pandas as pd
 from sklearn.compose import ColumnTransformer
+from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (accuracy_score, average_precision_score, balanced_accuracy_score,
                              confusion_matrix, f1_score, precision_score, recall_score)
@@ -42,9 +43,10 @@ def _validate_threshold(value: float, policy: str) -> float:
 class ThresholdClassifier:
     """A fitted classifier whose persisted predict method uses its locked threshold."""
 
-    def __init__(self, base_model: Pipeline, decision_threshold: float):
+    def __init__(self, base_model: Pipeline, decision_threshold: float, *, use_base_predict_at_half: bool = True):
         self.base_model = base_model
         self.decision_threshold = _validate_threshold(decision_threshold, "validation_macro_f1")
+        self.use_base_predict_at_half = use_base_predict_at_half
 
     @property
     def classes_(self):
@@ -62,8 +64,8 @@ class ThresholdClassifier:
         return self.base_model.predict_proba(inputs)
 
     def predict(self, inputs):
-        # Preserve LogisticRegression's existing decision boundary, including exact ties.
-        if self.decision_threshold == 0.5:
+        # Fixed policies and older saved wrappers retain the classifier's native boundary.
+        if self.decision_threshold == 0.5 and getattr(self, "use_base_predict_at_half", True):
             return self.base_model.predict(inputs)
         return (self.predict_proba(inputs)[:, 1] > self.decision_threshold).astype(int)
 
@@ -80,20 +82,52 @@ def _labels(df: pd.DataFrame) -> np.ndarray:
 
 def _model(plan: dict, seed: int) -> Pipeline:
     numeric = MODEL_NUMERIC + (MISSING_INDICATOR_COLUMNS if plan["add_missing_indicators"] else [])
+    use_histogram_boosting = plan.get("classifier") == "hist_gradient_boosting"
+    class_weight = "balanced" if plan["class_weight"] == "balanced" else None
     preprocessing = ColumnTransformer([
         ("numeric", StandardScaler(), numeric),
-        ("categorical", OneHotEncoder(handle_unknown="ignore"), CATEGORICAL),
+        ("categorical", OneHotEncoder(handle_unknown="ignore", sparse_output=not use_histogram_boosting), CATEGORICAL),
     ], remainder="drop")
-    return Pipeline([
-        ("features", preprocessing),
-        ("classifier", LogisticRegression(
-            max_iter=1500, class_weight="balanced" if plan["class_weight"] == "balanced" else None,
-            random_state=seed)),
-    ])
+    if use_histogram_boosting:
+        classifier = HistGradientBoostingClassifier(
+            max_iter=150, max_leaf_nodes=15, min_samples_leaf=40, learning_rate=0.1,
+            early_stopping=False, class_weight=class_weight, random_state=seed)
+    else:
+        classifier = LogisticRegression(max_iter=1500, class_weight=class_weight, random_state=seed)
+    return Pipeline([("features", preprocessing), ("classifier", classifier)])
+
+
+def _false_positive_rate_threshold(truth: np.ndarray, scores: np.ndarray,
+                                   limit: float) -> tuple[float, dict]:
+    positives = int(truth.sum())
+    negatives = len(truth) - positives
+    if not positives or not negatives:
+        raise ValueError("Validation must include both classes for a false-positive-rate limit.")
+
+    # Strict > makes each unique score a decision boundary that keeps ties together.
+    order = np.argsort(scores)
+    sorted_scores = scores[order]
+    thresholds = np.union1d(sorted_scores, [0.0, 1.0])
+    excluded = np.searchsorted(sorted_scores, thresholds, side="right")
+    excluded_positives = np.r_[0, np.cumsum(truth[order])][excluded]
+    true_positives = positives - excluded_positives
+    false_positives = len(truth) - excluded - true_positives
+    feasible = np.flatnonzero(false_positives / negatives <= limit)
+    best = max(feasible, key=lambda index: (true_positives[index], -false_positives[index], thresholds[index]))
+    return float(thresholds[best]), {
+        "objective": "recall_with_validation_false_positive_rate_limit",
+        "validation_false_positive_rate_limit": limit,
+        "validation_false_positive_rate": float(false_positives[best] / negatives),
+        "validation_false_positives": int(false_positives[best]),
+        "validation_recall": float(true_positives[best] / positives),
+        "candidates_evaluated": len(thresholds),
+        "tie_break": "fewer false positives, then higher threshold",
+    }
 
 
 def _select_threshold(model: Pipeline, validation: pd.DataFrame, plan: dict,
-                      prediction_features: list[str]) -> tuple[float, dict]:
+                      prediction_features: list[str], *,
+                      false_positive_rate_limit: float | None = None) -> tuple[float, dict]:
     policy = plan["threshold_policy"]
     selection = {"policy": policy, "candidates_evaluated": 0,
                  "fit_scope": "none; fixed threshold", "decision_threshold": 0.5,
@@ -102,6 +136,10 @@ def _select_threshold(model: Pipeline, validation: pd.DataFrame, plan: dict,
         return 0.5, selection
     truth = _labels(validation)
     scores = model.predict_proba(validation[prediction_features])[:, 1]
+    if false_positive_rate_limit is not None:
+        threshold, constrained = _false_positive_rate_threshold(truth, scores, false_positive_rate_limit)
+        selection.update(fit_scope="validation only", decision_threshold=threshold, **constrained)
+        return threshold, selection
     ranked = [(float(f1_score(truth, scores > threshold, average="macro", zero_division=0)), threshold)
               for threshold in THRESHOLD_GRID]
     score, threshold = max(ranked, key=lambda item: (item[0], -round(abs(item[1] - 0.5), 12), item[1]))
@@ -154,12 +192,21 @@ def _guardrails(original: pd.DataFrame, cleaned: pd.DataFrame, changes: dict, af
             "maximum_training_row_removal_fraction": 0.2}
 
 
-def evaluate_plan(train_df: pd.DataFrame, val_df: pd.DataFrame, plan: dict, seed: int = 42) -> dict:
+def evaluate_plan(train_df: pd.DataFrame, val_df: pd.DataFrame, plan: dict, seed: int = 42, *,
+                  validation_false_positive_rate: float | None = None) -> dict:
     result = {"ok": False, "plan": plan, "validation": None, "quality_before": None,
               "quality_after": None, "guardrails": {"passed": False, "reasons": []},
               "changes": {}, "error": None, "decision_threshold": None, "threshold_selection": None}
     try:
         result["plan"] = validate_plan(plan)
+        if validation_false_positive_rate is not None:
+            if result["plan"]["threshold_policy"] != "validation_macro_f1":
+                raise ValueError("validation_false_positive_rate requires threshold_policy=validation_macro_f1.")
+            if (isinstance(validation_false_positive_rate, (bool, np.bool_))
+                    or not isinstance(validation_false_positive_rate, Real)
+                    or not 0 <= validation_false_positive_rate <= 1):
+                raise ValueError("validation_false_positive_rate must be a finite number between 0 and 1.")
+            validation_false_positive_rate = float(validation_false_positive_rate)
         result["quality_before"] = profile(train_df)
         cleaner = Cleaner(result["plan"])
         cleaned = cleaner.fit_transform(train_df)
@@ -174,11 +221,14 @@ def evaluate_plan(train_df: pd.DataFrame, val_df: pd.DataFrame, plan: dict, seed
         model = _model(result["plan"], seed)
         features = _prediction_features(result["plan"])
         model.fit(cleaned[features], _labels(cleaned))
-        threshold, selection = _select_threshold(model, validation, result["plan"], features)
+        threshold, selection = _select_threshold(
+            model, validation, result["plan"], features, false_positive_rate_limit=validation_false_positive_rate)
         result.update({"decision_threshold": threshold, "threshold_selection": selection,
                        "prediction_features": features,
                        "derived_features": MISSING_INDICATOR_COLUMNS if result["plan"]["add_missing_indicators"] else []})
-        result["validation"] = _metrics(ThresholdClassifier(model, threshold), validation, features)
+        threshold_model = ThresholdClassifier(
+            model, threshold, use_base_predict_at_half=result["plan"]["threshold_policy"] == "fixed")
+        result["validation"] = _metrics(threshold_model, validation, features)
         result["ok"] = True
     except (ValueError, TypeError, KeyError, OverflowError) as error:
         result["error"] = f"{type(error).__name__}: {error}"
@@ -215,7 +265,8 @@ def finalize_plan(train_df: pd.DataFrame, val_df: pd.DataFrame, test_df: pd.Data
         selection = {"policy": plan["threshold_policy"], "fit_scope": "none; caller-provided locked threshold",
                      "candidates_evaluated": 0, "decision_threshold": decision_threshold,
                      "positive_prediction_rule": "probability > decision_threshold", "source": "caller_locked"}
-    model = ThresholdClassifier(base_model, decision_threshold)
+    model = ThresholdClassifier(
+        base_model, decision_threshold, use_base_predict_at_half=plan["threshold_policy"] == "fixed")
     validation_metrics = _metrics(model, validation, features)
     # The threshold and all fitted preprocessing are fixed before handling the test split.
     test = cleaner.transform(test_df)
