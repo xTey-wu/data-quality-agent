@@ -74,7 +74,8 @@ def test_seed_mismatch_rejected_before_running(tmp_path):
         run_experiment(tmp_path, tmp_path / "output", seed=42)
 
 
-def test_controlled_comparison_uses_equal_budgets_and_single_change_plans(tmp_path):
+@pytest.mark.parametrize("limit", [None, 0.07])
+def test_controlled_comparison_uses_equal_budgets_and_single_change_plans(tmp_path, limit):
     source, output = tmp_path / "input", tmp_path / "comparison"
     source.mkdir()
     table = fixture_table()
@@ -82,19 +83,32 @@ def test_controlled_comparison_uses_equal_budgets_and_single_change_plans(tmp_pa
                          ("test", table.iloc[100:])]:
         subset.to_csv(source / f"{name}.csv", index=False)
     (source / "metadata.json").write_text(json.dumps({"seed": 42}), encoding="utf-8")
-    result = run_experiment(source, output, compare=True, guided=True)
+    result = run_experiment(source, output, compare=True, guided=True, validation_false_positive_rate=limit)
     assert result["status"] == "completed"
     rows = {row["id"]: row for row in result["results"]}
-    assert set(rows) == {"minimal", "fixed", "previous", "indicators_only", "threshold_only", "preset_search", "agent"}
-    previous = rows["previous"]["plan"]
-    for key, field in [("indicators_only", "add_missing_indicators"), ("threshold_only", "threshold_policy")]:
-        modified = rows[key]["plan"]
-        assert {name for name in previous if name not in {"name", "reason"} and previous[name] != modified[name]} == {field}
+    if limit is None:
+        assert set(rows) == {"minimal", "fixed", "previous", "indicators_only", "threshold_only", "preset_search", "agent"}
+        previous = rows["previous"]["plan"]
+        for key, field in [("indicators_only", "add_missing_indicators"), ("threshold_only", "threshold_policy")]:
+            modified = rows[key]["plan"]
+            assert {name for name in previous if name not in {"name", "reason"} and previous[name] != modified[name]} == {field}
+    else:
+        assert set(rows) == {"minimal", "fixed", "preset_search", "agent"}
+        for row in rows.values():
+            assert row["threshold_selection"]["validation_false_positive_rate"] <= limit
+        objective = json.loads((output / "frozen_objective.json").read_text())
+        assert objective["metric"] == "minority_recall"
+        assert objective["validation_false_positive_rate_limit"] == limit
     assert result["preset_search"]["budgets"]["max_candidates"] == result["agent"]["budgets"]["max_candidates"] == 4
     assert sum(candidate["ok"] for candidate in result["preset_search"]["candidates"]) == 4
     candidates = result["agent"]["candidates"]
     assert len(candidates) == 4 and all(candidate["ok"] for candidate in candidates)
-    assert {candidate["plan"]["classifier"] for candidate in candidates} == {"logistic_regression", "hist_gradient_boosting"}
+    expected_classifiers = {"hist_gradient_boosting"}
+    if limit is None:
+        expected_classifiers.add("logistic_regression")
+    else:
+        assert {candidate["plan"]["add_calendar_feature"] for candidate in candidates} == {False, True}
+    assert {candidate["plan"]["classifier"] for candidate in candidates} == expected_classifiers
     assert all(candidate["plan"]["threshold_policy"] == "validation_macro_f1" for candidate in candidates)
 
 

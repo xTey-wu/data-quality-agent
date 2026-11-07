@@ -3,9 +3,10 @@
 from .schema import DEFAULT_PLAN
 
 
-def training_guidance(profile: dict) -> dict:
+def training_guidance(profile: dict, *, validation_false_positive_rate: float | None = None) -> dict:
     parse_errors = profile.get("numeric_parse_errors", 0) or 0
     range_violations = profile.get("numeric_range_violations", 0) or 0
+    recall_mode = validation_false_positive_rate is not None
     return {
         "strict_parse_errors": parse_errors,
         "numeric_range_violations": range_violations,
@@ -17,8 +18,10 @@ def training_guidance(profile: dict) -> dict:
             "numeric_parser": "semantic" if parse_errors else "strict",
             "outlier_policy": "invalid_to_missing" if range_violations else "keep",
             "deduplicate": bool(profile.get("duplicate_rows")),
-            "class_weight": "none",
+            "categorical_imputation": "most_frequent" if recall_mode else "unknown",
+            "class_weight": "balanced" if recall_mode else "none",
             "add_missing_indicators": bool(profile.get("missing_cells") or range_violations),
+            "classifier": "hist_gradient_boosting" if recall_mode else DEFAULT_PLAN["classifier"],
             "threshold_policy": "validation_macro_f1",
         },
     }

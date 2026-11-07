@@ -45,17 +45,11 @@ def load_recorded_table(path: Path) -> tuple:
     return table, digest
 
 
-def with_false_positive_rate(metrics: dict) -> dict:
-    (true_negative, false_positive), _ = metrics["confusion_matrix"]
-    negatives = true_negative + false_positive
-    return {**metrics, "false_positive_rate": false_positive / negatives if negatives else None}
-
-
 def validation_row(key, plan, threshold, selection, metrics, seconds):
     return {
         "id": key, "plan": validate_plan(plan), "classifier": plan.get("classifier", "logistic_regression"),
         "decision_threshold": threshold, "threshold_selection": selection,
-        "validation": with_false_positive_rate(metrics), "validation_seconds": round(seconds, 3),
+        "validation": metrics, "validation_seconds": round(seconds, 3),
     }
 
 
@@ -100,6 +94,7 @@ def run_benchmark(data_dir: Path, output_dir: Path, seed: int | None = None) -> 
         ("historical_tuned_hgb", tuned_hgb, None),
         ("matched_lr", tuned_lr, FPR_LIMIT),
         ("matched_hgb", tuned_hgb, FPR_LIMIT),
+        ("matched_hgb_calendar", {**tuned_hgb, "add_calendar_feature": True}, FPR_LIMIT),
     ):
         began = perf_counter()
         plan = {**plan, "name": key}
@@ -143,7 +138,7 @@ def run_benchmark(data_dir: Path, output_dir: Path, seed: int | None = None) -> 
                               seed=seed, decision_threshold=thresholds[key])
         test_rows.append({
             "id": key, "classifier": row["classifier"], "decision_threshold": thresholds[key],
-            "test": with_false_positive_rate(final["test"]), "artifacts": final["artifacts"],
+            "test": final["test"], "artifacts": final["artifacts"],
             "final_fit_and_test_seconds": round(perf_counter() - began, 3),
         })
     write_json(output_dir / "test.json", {"seed": seed, "input_sha256": input_hashes, "test_results": test_rows})

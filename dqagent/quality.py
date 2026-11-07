@@ -32,7 +32,7 @@ def validate_plan(plan: dict) -> dict:
     for key, options in PLAN_OPTIONS.items():
         if not isinstance(plan[key], str) or plan[key] not in options:
             raise ValueError(f"Unsupported {key}: choose from {sorted(options)}")
-    for key in ("deduplicate", "add_missing_indicators"):
+    for key in ("deduplicate", "add_missing_indicators", "add_calendar_feature"):
         if type(plan[key]) is not bool:
             raise ValueError(f"{key} must be a JSON boolean.")
     return dict(plan)

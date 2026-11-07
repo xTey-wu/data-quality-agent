@@ -20,7 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .schema import plan_signature
+from .objective import validate_fpr_limit, validation_rank
+from .schema import OPTIONAL_PLAN_DEFAULTS, plan_signature
 
 
 class ProviderError(RuntimeError):
@@ -59,6 +60,7 @@ class MockProvider:
     def complete(self, messages: list[dict], tools: list[dict]) -> ProviderResponse:
         del tools
         profile, recommended, budget, call_plans, feedback = None, None, 4, {}, []
+        limit = None
         for message in messages:
             if message.get("role") == "user":
                 try:
@@ -67,6 +69,8 @@ class MockProvider:
                         profile = payload["training_profile"]
                     if isinstance(payload.get("guidance"), dict):
                         recommended = payload["guidance"].get("recommended_plan")
+                    objective = payload.get("selection_objective") or {}
+                    limit = validate_fpr_limit(objective.get("validation_false_positive_rate_limit"))
                     requested = payload.get("max_candidates", 4)
                     if type(requested) is int:
                         budget = max(1, min(requested, 4))
@@ -121,11 +125,11 @@ class MockProvider:
             base = {key: value for key, value in recommended.items() if key not in {"name", "reason"}}
         valid_feedback = [(plan, result) for plan, result in feedback
                           if result.get("ok") and result.get("guardrails", {}).get("passed")
-                          and isinstance((result.get("validation") or {}).get("macro_f1"), (int, float))]
+                          and validation_rank(result.get("validation"), limit) is not None]
         retained = next((result.get("retained_plan") for _, result in reversed(feedback) if result.get("retained_plan")), None)
         anchors = [(plan, result) for plan, result in valid_feedback if plan.get("name") == retained]
         anchor = copy.deepcopy((anchors[-1] if anchors else max(
-            valid_feedback, key=lambda pair: pair[1]["validation"]["macro_f1"], default=(base, {})))[0])
+            valid_feedback, key=lambda pair: validation_rank(pair[1]["validation"], limit), default=(base, {})))[0])
         anchor.pop("name", None)
         anchor.pop("reason", None)
         options = []
@@ -148,14 +152,17 @@ class MockProvider:
             axes = [("class_weight", ("none", "balanced")),
                     ("categorical_imputation", ("unknown", "most_frequent")),
                     ("numeric_imputation", ("median", "mean"))]
-            if recommended:
+            if limit is not None:
+                axes.insert(0, ("add_calendar_feature", (False, True)))
+            elif recommended:
                 axes.insert(0, ("classifier", ("logistic_regression", "hist_gradient_boosting")))
             for key, choices in axes:
-                tested = {plan.get(key) for plan in self._issued}
+                default = OPTIONAL_PLAN_DEFAULTS.get(key)
+                tested = {plan.get(key, default) for plan in self._issued}
                 if set(choices).issubset(tested):
                     continue
                 alternative = copy.deepcopy(anchor)
-                alternative[key] = choices[1] if anchor.get(key) == choices[0] else choices[0]
+                alternative[key] = choices[1] if anchor.get(key, default) == choices[0] else choices[0]
                 options.append((alternative, f"以反馈保留的方案为基础，单独比较 {key}。"))
         normalized_options = []
         for candidate, reason in options:

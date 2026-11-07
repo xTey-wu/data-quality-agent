@@ -43,16 +43,19 @@ python -m dqagent.mcp_server --data-dir data/prepared --runs-dir runs
 | 字段 | 默认值 | 作用 |
 |---|---|---|
 | `add_missing_indicators` | `false` | 开启后生成15个缺失标记，区分原始缺失、被修复的非法值与真实业务状态 |
-| `threshold_policy` | `fixed` | `fixed` 使用0.5；`validation_macro_f1` 只在验证集的19个预设阈值中选优 |
+| `add_calendar_feature` | `false` | 在模型内部将清洗后的 `month` 和 `day` 合成日历顺序特征 |
+| `threshold_policy` | `fixed` | `fixed` 使用0.5。默认目标下，`validation_macro_f1` 在验证集的19个预设阈值中选优 |
 | `classifier` | `logistic_regression` | 可选逻辑回归或 `hist_gradient_boosting`，每个候选训练一种模型 |
 
-引导模式用训练画像修正已知解析和范围冲突，对所有候选统一使用验证集 Macro-F1 选阈值。工具在 `plan_adjustments` 中返回请求值与生效值，并按生效方案去重。先评估画像建议的起点，再比较分类器或单项处理策略。直接调用 `start_cleaning_run()` 时，按候选指定的字段执行，省略分类器与阈值策略时使用逻辑回归和0.5阈值。
+引导模式用训练画像修正已知解析和范围冲突，并按统一的运行目标在验证集选阈值。工具在 `plan_adjustments` 中返回请求值与生效值，并按生效方案去重。先评估画像建议的起点，再比较分类器或单项处理策略。直接调用 `start_cleaning_run()` 时，按候选指定的字段执行，省略分类器与阈值策略时使用逻辑回归和0.5阈值。
 
 真实 `unknown` 和合法 `pdays=-1` 不标为缺失。开启标记时使用15个原始预测字段与15个派生字段。原有8字段请求及已有固定阈值运行状态继续有效。
 
-单次运行最多尝试4个候选。只有满足硬约束的方案可参与验证 Macro-F1 比较；不合格或未超过已有方案时保留原方案。最终评价同时冻结方案与实际阈值，再读取测试集；状态持久化，进程重启也不会重新打开同一运行的测试入口。
+单次运行最多尝试4个候选。通过硬约束的方案按运行目标比较，默认目标为验证 Macro-F1。最终评价同时冻结方案与实际阈值，再读取测试集。状态持久化，进程重启也不会重新打开同一运行的测试入口。
 
 服务根据处理参数识别已有评估结果的方案，修改计划名称、理由或显式写出默认值仍视为同一方案。预算尚有余量时，重复提交会返回 `duplicate_plan`、原候选编号和剩余名额。MCP 服务为每个运行单独加锁，同一运行正在处理时，并发请求会收到 `run_busy`，当前操作完成后可用 `get_run_status` 查看结果。
+
+若希望在给定误报预算下多找出正类，在创建运行时调用 `start_cleaning_run(validation_false_positive_rate=0.07)`。这个上限对整次运行生效，并开启引导模式。工具用验证集预测分数的边界选阈值，在上限内优先比较召回率，再比较误报数。两项相同时保留先评估的候选。结果及运行状态包含 `selection_objective`，测试指标报告冻结阈值下的实际误报率。
 
 ## 数据和评价协议
 
@@ -121,6 +124,27 @@ python scripts/benchmark_guided.py --data data/prepared --seed 42 --output runs/
 | 251 | 0.6913 | 0.7116 | 42.34% / 6.50% | 47.73% / 6.68% |
 
 最后两列固定清洗方案，分别在验证集用7%的误报率上限选取召回最高的阈值，再报告测试结果。搜索两列各评估四个候选，按验证 Macro-F1 选阈值和方案。种子42的历史实测方案复现了测试 Macro-F1 0.6173，统一验证阈值后为0.6835。本表是离线回归与规则搜索结果。
+
+要复现误报预算下的搜索，可以使用以下命令。预设搜索和引导规则搜索各用四个候选，在同一验证误报上限下比较。
+
+```bash
+python -m dqagent prepare --raw data/raw/bank-full.csv --seed 977 --output data/prepared-977
+python -m dqagent run --mode mock --compare --validation-fpr-limit 0.07 --seed 977 --data data/prepared-977 --output runs/recall-at-7-977
+python scripts/benchmark_guided.py --seed 977 --data data/prepared-977 --output runs/calendar-977
+```
+
+`benchmark_guided.py` 的 `matched_hgb` 和 `matched_hgb_calendar` 固定清洗与分类器，只切换日历特征。日历特征来自已有的联系安排字段，在模型内部生成。导出元数据的 `model_derived_features` 记录该特征，调用模型时传入原有的已清洗列即可。
+
+下表使用同源数据的四个新划分。两种方案均在验证集按 7% 的误报率上限选阈值，表中计数来自测试集。可以用 `prepare --seed` 生成指定划分，再运行复现实验。
+
+| 种子 | 找对的正类（原特征 → 加日历） | 误报（原特征 → 加日历） |
+|---|---:|---:|
+| 419 | 525 → 530 | 575 → 571 |
+| 673 | 550 → 573 | 542 → 553 |
+| 977 | 511 → 514 | 527 → 521 |
+| 1301 | 498 → 496 | 523 → 541 |
+
+误报上限模式从固定的梯度提升树基线出发，规则搜索先比较日历特征，再根据验证反馈比较类别权重和填补方式。种子 977 的四候选搜索和预设搜索选中同一方案。种子 1301 的四候选搜索在测试集多找对 2 人，同时增加 30 个误报。验证上限和测试实测误报率分别记录。
 
 ## 原生 Function Calling 实验
 

@@ -20,6 +20,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from . import modeling, quality
 from .data import load_table
 from .guidance import guide_plan, training_guidance
+from .objective import selection_objective, validate_fpr_limit, validation_rank
 from .schema import CATEGORICAL, MODEL_FEATURES, MODEL_NUMERIC, TARGET, plan_signature
 
 
@@ -36,6 +37,7 @@ class CleaningPlan(BaseModel):
     class_weight: Literal["none", "balanced"]
     reason: Annotated[str, Field(min_length=1, max_length=1200)]
     add_missing_indicators: bool = False
+    add_calendar_feature: bool = False
     threshold_policy: Literal["fixed", "validation_macro_f1"] = "fixed"
     classifier: Literal["logistic_regression", "hist_gradient_boosting"] = "logistic_regression"
 
@@ -195,9 +197,14 @@ class CleaningService:
         except (ValueError, TypeError, KeyError, OSError):
             return self._failure(ServiceError("invalid_training_data", "训练数据无法检查，请核对数据格式。"))
 
-    def start_cleaning_run(self, guided: bool = False) -> dict:
+    def start_cleaning_run(self, guided: bool = False, *,
+                           validation_false_positive_rate: float | None = None) -> dict:
         """Create a new persistent run with a fixed four-candidate budget."""
         try:
+            try:
+                limit = validate_fpr_limit(validation_false_positive_rate)
+            except ValueError as error:
+                raise ServiceError("invalid_fpr_limit", str(error)) from None
             train, validation, hashes = self._training_inputs()
             training = quality.profile(train)
             if not len(validation):
@@ -215,13 +222,15 @@ class CleaningService:
             state = {"schema_version": 1, "run_id": run_id, "status": "open", "created_at_utc": _now(),
                      "seed": self.seed, "max_candidates": self.MAX_CANDIDATES, "candidate_attempts": 0,
                      "candidates": [], "best_plan": None, "best_validation": None, "best_decision_threshold": None,
+                     "validation_false_positive_rate": limit, "selection_objective": selection_objective(limit),
                      "input_sha256": hashes, "artifacts": ["state.json", "trace.jsonl"],
                      "execution_mode": "host_tool_execution", "internal_model_calls": 0}
-            if guided:
-                state["guidance"] = training_guidance(prediction_profile(training))
+            if guided or limit is not None:
+                state["guidance"] = training_guidance(prediction_profile(training), validation_false_positive_rate=limit)
             self._atomic_json(run_dir / "state.json", state)
             self._trace("start_cleaning_run", run_dir=run_dir, run_id=run_id, input_sha256=hashes,
-                        guidance=state.get("guidance"))
+                        guidance=state.get("guidance"), selection_objective=state["selection_objective"],
+                        validation_false_positive_rate=limit)
             return self._public_status(state)
         except ServiceError as error:
             return self._failure(error)
@@ -258,10 +267,11 @@ class CleaningService:
                 state["candidate_attempts"] += 1
                 self._atomic_json(run_dir / "state.json", state)
                 train, validation, _ = self._training_inputs(state)
-                result = modeling.evaluate_plan(train, validation, candidate, seed=state["seed"])
+                limit = state.get("validation_false_positive_rate")
+                options = {} if limit is None else {"validation_false_positive_rate": limit}
+                result = modeling.evaluate_plan(train, validation, candidate, seed=state["seed"], **options)
                 metrics = result.get("validation") or {}
-                score = metrics.get("macro_f1")
-                valid_score = type(score) in (float, int) and math.isfinite(score) and 0 <= score <= 1
+                rank = validation_rank(metrics, limit)
                 threshold = result.get("decision_threshold", metrics.get("decision_threshold"))
                 if threshold is None and candidate.get("threshold_policy", "fixed") == "fixed":
                     threshold = 0.5
@@ -269,9 +279,11 @@ class CleaningService:
                 if result.get("ok") and not valid_threshold:
                     result = {**result, "ok": False, "error": "验证阈值缺失或无效，不能保留此方案。",
                               "guardrails": {"passed": False, "reasons": ["Missing or invalid validation decision threshold."]}}
-                passed = result.get("ok") is True and result.get("guardrails", {}).get("passed") is True and valid_score
-                previous_score = (state.get("best_validation") or {}).get("macro_f1")
-                selected = passed and (previous_score is None or score > previous_score)
+                if result.get("ok") and limit is not None and rank is None:
+                    result = {**result, "ok": False, "error": "验证结果无效或超过误报率上限，不能保留此方案。"}
+                passed = result.get("ok") is True and result.get("guardrails", {}).get("passed") is True and rank is not None
+                previous_rank = validation_rank(state.get("best_validation"), limit)
+                selected = passed and (previous_rank is None or rank > previous_rank)
                 decision = "selected" if selected else "not_selected" if passed else "rejected"
                 summary = {"attempt": state["candidate_attempts"], "plan": candidate,
                            "plan_adjustments": adjustments,
@@ -294,6 +306,7 @@ class CleaningService:
                     quality_before=prediction_profile(result["quality_before"]) if result.get("quality_before") else None,
                     quality_after=prediction_profile(result["quality_after"]) if result.get("quality_after") else None,
                     retained_plan=state["best_plan"], best_decision_threshold=state.get("best_decision_threshold"),
+                    validation_false_positive_rate=limit, selection_objective=selection_objective(limit),
                     remaining_candidates=state["max_candidates"] - state["candidate_attempts"])
         except ServiceError as error:
             return self._failure(error, run_dir=run_dir)
@@ -305,8 +318,10 @@ class CleaningService:
             "run_id", "status", "created_at_utc", "candidate_attempts", "max_candidates", "candidates",
             "best_plan", "best_validation", "artifacts", "final_metrics", "finalization_error",
             "best_decision_threshold", "frozen_decision_threshold",
-            "guidance",
+            "guidance", "validation_false_positive_rate", "selection_objective",
         ) if key in state}
+        visible.setdefault("validation_false_positive_rate", None)
+        visible.setdefault("selection_objective", selection_objective(visible["validation_false_positive_rate"]))
         visible["remaining_candidates"] = max(0, state["max_candidates"] - state["candidate_attempts"])
         return self._envelope(ok=True, **visible)
 
@@ -336,7 +351,8 @@ class CleaningService:
                 if state["best_plan"] is None:
                     raise ServiceError("no_valid_plan", "尚无通过检查的方案，请先评估候选。")
                 locked_threshold = state.get("best_decision_threshold")
-                if locked_threshold is None and state["best_plan"].get("threshold_policy", "fixed") == "fixed":
+                if (locked_threshold is None and state.get("validation_false_positive_rate") is None
+                        and state["best_plan"].get("threshold_policy", "fixed") == "fixed"):
                     locked_threshold = 0.5
                 if (type(locked_threshold) not in (float, int) or not math.isfinite(locked_threshold)
                         or not 0 <= locked_threshold <= 1):
@@ -355,7 +371,9 @@ class CleaningService:
                     state.update(status="finalizing", frozen_plan=state["best_plan"], frozen_at_utc=_now(),
                                  frozen_decision_threshold=float(locked_threshold))
                     self._atomic_json(run_dir / "state.json", state)
-                    self._trace("plan_frozen", run_dir=run_dir, plan=state["frozen_plan"], decision_threshold=locked_threshold)
+                    self._trace("plan_frozen", run_dir=run_dir, plan=state["frozen_plan"],
+                                decision_threshold=locked_threshold,
+                                selection_objective=selection_objective(state.get("validation_false_positive_rate")))
                     test_path = self._data_path("test.csv")
                     test = load_table(test_path)
                     final = modeling.finalize_plan(train, validation, test, state["frozen_plan"],

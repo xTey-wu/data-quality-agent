@@ -13,6 +13,7 @@ import time
 from .data import load_table
 from .engine import run_agent
 from .modeling import evaluate_plan, finalize_plan
+from .objective import selection_objective, validate_fpr_limit
 from .providers import ChatCompletionsProvider, MockProvider, ProviderResponse
 from .quality import evaluate_repairs, profile
 from .schema import DEFAULT_PLAN
@@ -25,12 +26,13 @@ def write_json(path: Path, value: dict) -> None:
 class _PresetSearchProvider(MockProvider):
     """Fixed four-plan control with the same tool and candidate budget."""
 
-    def __init__(self):
+    def __init__(self, classifier="logistic_regression"):
         super().__init__()
         self._step = 0
         self.plans = [{
             **DEFAULT_PLAN, "name": f"grid_{category}_{weight}",
             "categorical_imputation": category, "class_weight": weight,
+            "classifier": classifier,
             "add_missing_indicators": True, "threshold_policy": "validation_macro_f1",
             "reason": "Evaluate a predeclared categorical-imputation/class-weight combination.",
         } for category in ("unknown", "most_frequent") for weight in ("none", "balanced")]
@@ -52,12 +54,15 @@ class _PresetSearchProvider(MockProvider):
 
 
 def run_experiment(data_dir, output_dir, *, mode="mock", config=None, provider_profile="qwen", seed=42,
-                   compare=False, guided=None) -> dict:
+                   compare=False, guided=None, validation_false_positive_rate=None) -> dict:
     data_dir, output_dir = Path(data_dir), Path(output_dir)
     if mode not in {"mock", "api"}:
         raise ValueError("mode must be mock or api")
     if guided is None:
         guided = mode == "api"
+    limit = validate_fpr_limit(validation_false_positive_rate)
+    objective = selection_objective(limit)
+    evaluation_options = {} if limit is None else {"validation_false_positive_rate": limit}
     if output_dir.exists() and any(output_dir.iterdir()):
         raise ValueError("结果目录已有文件，请换一个新目录，避免覆盖之前的实验。")
     required = ["train_dirty.csv", "validation.csv", "test.csv", "metadata.json"]
@@ -89,7 +94,8 @@ def run_experiment(data_dir, output_dir, *, mode="mock", config=None, provider_p
     }
     # This call cannot access the test, reference data, or synthetic answer manifest.
     planning_started = time.perf_counter()
-    agent = run_agent(train, validation, output_dir / "agent", provider=provider, seed=seed, guided=guided)
+    agent = run_agent(train, validation, output_dir / "agent", provider=provider, seed=seed, guided=guided,
+                      **evaluation_options)
     info["agent"] = agent
     info["agent_planning_seconds"] = round(time.perf_counter() - planning_started, 3)
     info["execution"]["real_model_status"] = agent["real_model_validation"]
@@ -109,7 +115,7 @@ def run_experiment(data_dir, output_dir, *, mode="mock", config=None, provider_p
         "add_missing_indicators": False, "threshold_policy": "fixed",
         "reason": "Frozen previous strategy for a same-split regression comparison.",
     }
-    if compare:
+    if compare and limit is None:
         baseline_plans.extend([
             ("previous", "原方案", reference_plan),
             ("indicators_only", "仅加入缺失标记", {
@@ -121,8 +127,14 @@ def run_experiment(data_dir, output_dir, *, mode="mock", config=None, provider_p
                 "reason": "Change validation threshold selection alone; keep the original prediction features.",
             }),
         ])
+    if limit is not None:
+        baseline_plans = [(key, label, {**plan, "threshold_policy": "validation_macro_f1"})
+                          for key, label, plan in baseline_plans]
+    if compare:
         search_started = time.perf_counter()
-        control = run_agent(train, validation, output_dir / "preset_search", provider=_PresetSearchProvider(), seed=seed)
+        classifier = "hist_gradient_boosting" if limit is not None else "logistic_regression"
+        control = run_agent(train, validation, output_dir / "preset_search",
+                            provider=_PresetSearchProvider(classifier), seed=seed, **evaluation_options)
         info["preset_search"] = control
         info["preset_search_seconds"] = round(time.perf_counter() - search_started, 3)
         if control["selected_plan"] is not None:
@@ -134,7 +146,7 @@ def run_experiment(data_dir, output_dir, *, mode="mock", config=None, provider_p
     validation_seconds = {}
     for key, _, plan in baseline_plans:
         validation_started = time.perf_counter()
-        evaluated[key] = evaluate_plan(train, validation, plan, seed=seed)
+        evaluated[key] = evaluate_plan(train, validation, plan, seed=seed, **evaluation_options)
         validation_seconds[key] = time.perf_counter() - validation_started
         if key in {"agent", "preset_search"} and evaluated[key].get("ok"):
             source = agent if key == "agent" else info["preset_search"]
@@ -144,6 +156,7 @@ def run_experiment(data_dir, output_dir, *, mode="mock", config=None, provider_p
     frozen_thresholds = {key: candidate["decision_threshold"] for key, candidate in evaluated.items()
                          if candidate.get("ok")}
     write_json(output_dir / "frozen_thresholds.json", frozen_thresholds)
+    write_json(output_dir / "frozen_objective.json", objective)
     test = load_table(data_dir / "test.csv")
     info["input_sha256"]["test.csv"] = hashlib.sha256((data_dir / "test.csv").read_bytes()).hexdigest()
     reference = load_table(data_dir / "train_reference.csv") if (data_dir / "train_reference.csv").exists() else None
@@ -163,6 +176,7 @@ def run_experiment(data_dir, output_dir, *, mode="mock", config=None, provider_p
             "decision_threshold": frozen_thresholds[key],
             "threshold_selection": candidate["threshold_selection"],
             "prediction_features": final["prediction_features"],
+            "model_derived_features": final["model_derived_features"],
             "quality_after": candidate["quality_after"], "guardrails": candidate["guardrails"],
             "changes": candidate.get("changes"), "artifacts": final.get("artifacts", {}),
             "final_fit_eval_seconds": round(validation_seconds[key] + time.perf_counter() - row_start, 3),
@@ -179,7 +193,9 @@ def run_experiment(data_dir, output_dir, *, mode="mock", config=None, provider_p
         "same_split": True, "test_used_for_selection": False,
         "threshold_fit_scope": "validation only; thresholds frozen before opening test",
         "candidate_budget_per_search": 4,
-        "comparison_note": "原方案及单项对照在同一已报告的数据划分上进行回归比较；不据此声称独立外部泛化。",
+        "selection_objective": objective,
+        "comparison_note": ("各方案在同一个数据划分和验证误报上限下比较。" if limit is not None else
+                            "各方案在同一个数据划分上进行回归比较。"),
     }
     write_json(output_dir / "metrics.json", info)
     _write_summary(output_dir, info)
@@ -187,14 +203,23 @@ def run_experiment(data_dir, output_dir, *, mode="mock", config=None, provider_p
 
 
 def _write_summary(directory: Path, info: dict) -> None:
-    lines = ["# 实验结果", "", info["note"], "",
-             "| 方案 | 阈值 | 验证 Macro-F1 | 测试 Macro-F1 | 测试少数类召回 | 测试精确率 | 测试 AP |",
-             "|---|---:|---:|---:|---:|---:|---:|"]
+    objective = info["comparison_protocol"]["selection_objective"]
+    limit = objective.get("validation_false_positive_rate_limit")
+    lines = ["# 实验结果", "", info["note"], ""]
+    if limit is not None:
+        lines += [f"运行目标是在验证误报率不超过 {limit:.2%} 时优先提高召回。", ""]
+    lines += ["| 方案 | 阈值 | 验证 Macro-F1 | 测试 Macro-F1 | 测试少数类召回 | 测试精确率 | 测试误报率 | 测试 AP |",
+              "|---|---:|---:|---:|---:|---:|---:|---:|"]
     for row in info["results"]:
         if row["ok"]:
-            lines.append(f'| {row["label"]} | {row["decision_threshold"]:.2f} | {row["validation"]["macro_f1"]:.4f} | {row["test"]["macro_f1"]:.4f} | {row["test"]["minority_recall"]:.4f} | {row["test"]["precision"]:.4f} | {row["test"]["average_precision"]:.4f} |')
+            test = row["test"]
+            fpr = test["false_positive_rate"]
+            test_fpr = "—" if fpr is None else f"{fpr:.2%}"
+            lines.append(f'| {row["label"]} | {row["decision_threshold"]:.6g} | {row["validation"]["macro_f1"]:.4f} | '
+                         f'{test["macro_f1"]:.4f} | {test["minority_recall"]:.4f} | {test["precision"]:.4f} | '
+                         f'{test_fpr} | {test["average_precision"]:.4f} |')
         else:
-            lines.append(f'| {row["label"]} | — | 执行失败 | — | — | — | — |')
+            lines.append(f'| {row["label"]} | — | 执行失败 | — | — | — | — | — |')
     lines += ["", "AP 为平均精确率，用作 PR 曲线表现的摘要。", "",
               "测试集在方案锁定后打开，所有方案使用同一组样本和标签。", "",
               f'真实大模型调用次数：{info["agent"]["model_calls"]}；决策模式：{info["agent"]["mode"]}。']

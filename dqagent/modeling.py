@@ -16,14 +16,17 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (accuracy_score, average_precision_score, balanced_accuracy_score,
                              confusion_matrix, f1_score, precision_score, recall_score)
 from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder, StandardScaler
+from sklearn.preprocessing import FunctionTransformer, OneHotEncoder, StandardScaler
 
+from .objective import validate_fpr_limit
 from .quality import Cleaner, MAX_LEGAL_CLIP_FRACTION, profile, validate_plan
 from .schema import (CATEGORICAL, MISSING_INDICATOR_COLUMNS, MODEL_FEATURES,
                      MODEL_NUMERIC, ROW_ID, TARGET)
 
 
 THRESHOLD_GRID = tuple(index / 20 for index in range(1, 20))
+MONTH_START = dict(zip("jan feb mar apr may jun jul aug sep oct nov dec".split(),
+                       (0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334)))
 
 
 def _validate_threshold(value: float, policy: str) -> float:
@@ -80,14 +83,32 @@ def _labels(df: pd.DataFrame) -> np.ndarray:
     return df[TARGET].map({"no": 0, "yes": 1}).to_numpy(dtype=int)
 
 
+def _calendar_day(inputs: pd.DataFrame, *, fill_unknown_month: bool) -> pd.DataFrame:
+    day = inputs["month"].map(MONTH_START) + inputs["day"]
+    if fill_unknown_month:
+        day = day.fillna(0.0)
+    return day.to_frame("calendar_day")
+
+
+def _calendar_feature_names(_transformer, _input_features) -> list[str]:
+    return ["calendar_day"]
+
+
 def _model(plan: dict, seed: int) -> Pipeline:
     numeric = MODEL_NUMERIC + (MISSING_INDICATOR_COLUMNS if plan["add_missing_indicators"] else [])
     use_histogram_boosting = plan.get("classifier") == "hist_gradient_boosting"
     class_weight = "balanced" if plan["class_weight"] == "balanced" else None
-    preprocessing = ColumnTransformer([
-        ("numeric", StandardScaler(), numeric),
-        ("categorical", OneHotEncoder(handle_unknown="ignore", sparse_output=not use_histogram_boosting), CATEGORICAL),
-    ], remainder="drop")
+    transforms = [("numeric", StandardScaler(), numeric)]
+    if plan.get("add_calendar_feature"):
+        calendar = Pipeline([
+            ("derive", FunctionTransformer(_calendar_day, feature_names_out=_calendar_feature_names,
+                                           kw_args={"fill_unknown_month": not use_histogram_boosting})),
+            ("scale", StandardScaler()),
+        ])
+        transforms.append(("calendar", calendar, ["month", "day"]))
+    transforms.append(("categorical", OneHotEncoder(handle_unknown="ignore", sparse_output=not use_histogram_boosting),
+                       CATEGORICAL))
+    preprocessing = ColumnTransformer(transforms, remainder="drop")
     if use_histogram_boosting:
         classifier = HistGradientBoostingClassifier(
             max_iter=150, max_leaf_nodes=15, min_samples_leaf=40, learning_rate=0.1,
@@ -154,6 +175,9 @@ def _metrics(model: ThresholdClassifier, df: pd.DataFrame, prediction_features: 
     truth = _labels(df)
     predicted = model.predict(df[prediction_features])
     scores = model.predict_proba(df[prediction_features])[:, 1]
+    matrix = confusion_matrix(truth, predicted, labels=[0, 1]).tolist()
+    true_negative, false_positive = matrix[0]
+    negatives = true_negative + false_positive
     return {
         "macro_f1": float(f1_score(truth, predicted, average="macro", zero_division=0)),
         "precision": float(precision_score(truth, predicted, pos_label=1, zero_division=0)),
@@ -162,7 +186,8 @@ def _metrics(model: ThresholdClassifier, df: pd.DataFrame, prediction_features: 
         "average_precision": float(average_precision_score(truth, scores)) if np.any(truth == 1) else None,
         "balanced_accuracy": float(balanced_accuracy_score(truth, predicted)),
         "accuracy": float(accuracy_score(truth, predicted)),
-        "confusion_matrix": confusion_matrix(truth, predicted, labels=[0, 1]).tolist(),
+        "false_positive_rate": false_positive / negatives if negatives else None,
+        "confusion_matrix": matrix,
         "confusion_matrix_labels": ["no", "yes"],
         "rows": len(df), "positive_class": "yes", "decision_threshold": model.decision_threshold,
     }
@@ -199,14 +224,9 @@ def evaluate_plan(train_df: pd.DataFrame, val_df: pd.DataFrame, plan: dict, seed
               "changes": {}, "error": None, "decision_threshold": None, "threshold_selection": None}
     try:
         result["plan"] = validate_plan(plan)
-        if validation_false_positive_rate is not None:
-            if result["plan"]["threshold_policy"] != "validation_macro_f1":
-                raise ValueError("validation_false_positive_rate requires threshold_policy=validation_macro_f1.")
-            if (isinstance(validation_false_positive_rate, (bool, np.bool_))
-                    or not isinstance(validation_false_positive_rate, Real)
-                    or not 0 <= validation_false_positive_rate <= 1):
-                raise ValueError("validation_false_positive_rate must be a finite number between 0 and 1.")
-            validation_false_positive_rate = float(validation_false_positive_rate)
+        validation_false_positive_rate = validate_fpr_limit(validation_false_positive_rate)
+        if validation_false_positive_rate is not None and result["plan"]["threshold_policy"] != "validation_macro_f1":
+            raise ValueError("validation_false_positive_rate requires threshold_policy=validation_macro_f1.")
         result["quality_before"] = profile(train_df)
         cleaner = Cleaner(result["plan"])
         cleaned = cleaner.fit_transform(train_df)
@@ -225,6 +245,7 @@ def evaluate_plan(train_df: pd.DataFrame, val_df: pd.DataFrame, plan: dict, seed
             model, validation, result["plan"], features, false_positive_rate_limit=validation_false_positive_rate)
         result.update({"decision_threshold": threshold, "threshold_selection": selection,
                        "prediction_features": features,
+                       "model_derived_features": ["calendar_day"] if result["plan"]["add_calendar_feature"] else [],
                        "derived_features": MISSING_INDICATOR_COLUMNS if result["plan"]["add_missing_indicators"] else []})
         threshold_model = ThresholdClassifier(
             model, threshold, use_base_predict_at_half=result["plan"]["threshold_policy"] == "fixed")
@@ -257,6 +278,7 @@ def finalize_plan(train_df: pd.DataFrame, val_df: pd.DataFrame, test_df: pd.Data
     validation = cleaner.transform(val_df)
     features = _prediction_features(plan)
     derived_features = MISSING_INDICATOR_COLUMNS if plan["add_missing_indicators"] else []
+    model_derived_features = ["calendar_day"] if plan["add_calendar_feature"] else []
     base_model = _model(plan, seed)
     base_model.fit(training[features], _labels(training))
     if decision_threshold is None:
@@ -274,6 +296,7 @@ def finalize_plan(train_df: pd.DataFrame, val_df: pd.DataFrame, test_df: pd.Data
               "guardrails": guardrails, "changes": changes,
               "fit_scope": "training only; validation and test transformed with frozen statistics",
               "prediction_features": features, "derived_features": derived_features,
+              "model_derived_features": model_derived_features,
               "decision_threshold": decision_threshold, "threshold_selection": selection,
               "test_evaluations": 1}
     result["artifacts"] = {name: str(output_dir / filename) for name, filename in {
@@ -286,10 +309,12 @@ def finalize_plan(train_df: pd.DataFrame, val_df: pd.DataFrame, test_df: pd.Data
         table.to_csv(output_dir / f"{name}_processed.csv", index=False)
     (output_dir / "preprocessing.json").write_text(
         json.dumps({**cleaner.description(), "prediction_features": features, "derived_features": derived_features,
+                    "model_derived_features": model_derived_features,
                     "decision_threshold": decision_threshold, "threshold_selection": selection},
                    ensure_ascii=False, indent=2), encoding="utf-8")
     joblib.dump({"cleaner": cleaner, "model": model, "base_model": base_model, "plan": plan,
                  "prediction_features": features, "derived_features": derived_features,
+                 "model_derived_features": model_derived_features,
                  "decision_threshold": decision_threshold, "threshold_selection": selection,
                  "target_mapping": {"no": 0, "yes": 1}},
                 output_dir / "model.joblib")

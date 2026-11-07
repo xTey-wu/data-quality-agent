@@ -46,6 +46,7 @@ def test_validation_threshold_improves_macro_f1_and_reports_consistent_metrics()
     assert adaptive["validation"]["precision"] == pytest.approx(tp / (tp + fp))
     assert adaptive["validation"]["minority_recall"] == pytest.approx(tp / (tp + fn))
     assert adaptive["validation"]["positive_f1"] == pytest.approx(2 * tp / (2 * tp + fp + fn))
+    assert adaptive["validation"]["false_positive_rate"] == pytest.approx(fp / (tn + fp))
     assert tn + fp + fn + tp == len(validation)
 
 
@@ -185,6 +186,44 @@ def test_legacy_fixed_plan_keeps_pipeline_predictions_metrics_and_feature_set(tm
     assert final["decision_threshold"] == evaluated["decision_threshold"] == 0.5
     assert final["test"]["macro_f1"] == pytest.approx(f1_score(test["y"] == "yes", expected, average="macro"))
     assert final["derived_features"] == []
+    assert final["model_derived_features"] == []
+
+
+@pytest.mark.parametrize("classifier,unknown_month", [
+    ("logistic_regression", 0.0), ("hist_gradient_boosting", np.nan),
+])
+def test_calendar_feature_is_derived_in_the_exported_model(tmp_path, classifier, unknown_month):
+    training, validation, synthetic_holdout = table(200), table(40, offset=1000), table(40, offset=2000)
+    training["month"] = np.where(np.arange(len(training)) % 3 == 0, "may", "jul")
+    validation.loc[:4, "month"] = ["apr", "feb", "unexpected-month", "", "may"]
+    validation.loc[:4, "day"] = ["20", "1", "10", "10", ""]
+    calendar_plan = plan(classifier=classifier, add_calendar_feature=True,
+                         categorical_imputation="most_frequent", add_missing_indicators=True)
+    evaluated = modeling.evaluate_plan(training, validation, calendar_plan)
+    assert evaluated["ok"], evaluated["error"]
+    final = modeling.finalize_plan(training, validation, synthetic_holdout, calendar_plan, tmp_path)
+    bundle = joblib.load(tmp_path / "model.joblib")
+    preprocessing = json.loads((tmp_path / "preprocessing.json").read_text())
+    saved_metrics = json.loads((tmp_path / "test_metrics.json").read_text())
+    for record in (evaluated, final, bundle, preprocessing, saved_metrics):
+        assert record["model_derived_features"] == ["calendar_day"]
+        assert record["prediction_features"] == MODEL_FEATURES + MISSING_INDICATOR_COLUMNS
+        assert record["derived_features"] == MISSING_INDICATOR_COLUMNS
+
+    prepared = bundle["cleaner"].transform(validation.iloc[:5][MODEL_FEATURES])
+    assert "calendar_day" not in prepared.columns
+    exported = pd.read_csv(tmp_path / "validation_processed.csv")
+    assert "calendar_day" not in exported.columns
+    preprocessor = bundle["base_model"].named_steps["features"]
+    calendar = preprocessor.named_transformers_["calendar"]
+    source = prepared[["month", "day"]]
+    derived = calendar.named_steps["derive"].transform(source)["calendar_day"]
+    np.testing.assert_allclose(derived, [110.0, 32.0, unknown_month, 191.0, 130.0], equal_nan=True)
+    assert "calendar__calendar_day" in preprocessor.get_feature_names_out()
+    if np.isnan(unknown_month):
+        assert np.isnan(calendar.transform(source)[2, 0])
+    assert np.isfinite(bundle["model"].predict_proba(prepared)).all()
+    assert final["validation"] == evaluated["validation"]
 
 
 def test_missing_indicators_enter_model_and_duration_has_no_effect(tmp_path):
@@ -264,7 +303,7 @@ def test_threshold_at_half_preserves_fixed_predict_and_supports_strict_score_bou
     np.testing.assert_array_equal(strict.predict(None), [0, 1])
 
 
-@pytest.mark.parametrize("cap", [True, "0.07", float("nan"), -0.1, 1.1])
+@pytest.mark.parametrize("cap", [True, np.bool_(True), "0.07", float("nan"), -0.1, 1.1])
 def test_fpr_cap_rejects_invalid_rates_before_model_fit(cap, monkeypatch):
     monkeypatch.setattr(modeling, "_model", lambda *args: pytest.fail("invalid FPR cap reached model fitting"))
     result = modeling.evaluate_plan(table(), table(), plan(threshold_policy="validation_macro_f1"),

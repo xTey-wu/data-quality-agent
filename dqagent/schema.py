@@ -28,6 +28,7 @@ PLAN_OPTIONS = {
 
 OPTIONAL_PLAN_DEFAULTS = {
     "add_missing_indicators": False,
+    "add_calendar_feature": False,
     "threshold_policy": "fixed",
     "classifier": "logistic_regression",
 }

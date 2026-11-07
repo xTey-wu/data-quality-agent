@@ -17,6 +17,7 @@ from mcp.client.stdio import StdioServerParameters, stdio_client
 from pydantic import ValidationError
 
 from dqagent import modeling
+from dqagent.objective import selection_objective
 from dqagent.schema import DEFAULT_PLAN, MODEL_FEATURES, plan_signature
 from dqagent.service import CleaningPlan, CleaningService
 
@@ -63,14 +64,16 @@ def test_schema_rejects_arbitrary_actions_and_nonboolean_values():
 
 def test_extended_plan_fields_are_optional_and_strict():
     legacy = {key: value for key, value in DEFAULT_PLAN.items()
-              if key not in {"add_missing_indicators", "threshold_policy", "classifier"}}
+              if key not in {"add_missing_indicators", "add_calendar_feature", "threshold_policy", "classifier"}}
     parsed = CleaningPlan.model_validate(legacy)
     assert parsed.add_missing_indicators is False
+    assert parsed.add_calendar_feature is False
     assert parsed.threshold_policy == "fixed"
     assert parsed.classifier == "logistic_regression"
     required = CleaningPlan.model_json_schema()["required"]
     assert "add_missing_indicators" not in required and "threshold_policy" not in required
     assert "classifier" not in required
+    assert "add_calendar_feature" not in required
     with pytest.raises(ValidationError):
         CleaningPlan.model_validate({**legacy, "add_missing_indicators": 1})
 
@@ -98,6 +101,54 @@ def test_guidance_persists_and_deduplicates_effective_plans(prepared):
     final = restarted.finalize_cleaning_run(run_id)
     assert final["status"] == "finalized"
     assert final["frozen_decision_threshold"] == candidate["decision_threshold"]
+
+
+def test_fpr_objective_persists_and_ranks_recall_then_fewer_false_positives(prepared):
+    data, runs = prepared
+    service = CleaningService(data, runs)
+    started = service.start_cleaning_run(validation_false_positive_rate=0.07)
+    run_id = started["run_id"]
+    assert started["selection_objective"] == selection_objective(0.07)
+    assert started["guidance"]["recommended_plan"]["threshold_policy"] == "validation_macro_f1"
+    assert started["max_candidates"] == 4
+
+    def result(tn, fp, fn, tp, threshold):
+        macro_f1 = (tp / (2 * tp + fp + fn)) + (tn / (2 * tn + fp + fn))
+        return {"ok": True, "guardrails": {"passed": True},
+                "validation": {"macro_f1": macro_f1, "minority_recall": tp / (tp + fn),
+                               "confusion_matrix": [[tn, fp], [fn, tp]]},
+                "decision_threshold": threshold}
+
+    outcomes = [result(100, 0, 7, 3, 0.8), result(93, 7, 6, 4, 0.7),
+                result(96, 4, 6, 4, 0.6), result(92, 8, 5, 5, 0.5)]
+    assert outcomes[0]["validation"]["macro_f1"] > outcomes[1]["validation"]["macro_f1"]
+    plans = [
+        {**DEFAULT_PLAN, "name": "higher-f1"},
+        {**DEFAULT_PLAN, "name": "higher-recall", "numeric_imputation": "mean"},
+        {**DEFAULT_PLAN, "name": "fewer-false-positives", "categorical_imputation": "most_frequent"},
+        {**DEFAULT_PLAN, "name": "over-limit", "class_weight": "none"},
+    ]
+    restarted = CleaningService(data, runs)
+    assert restarted.get_run_status(run_id)["validation_false_positive_rate"] == 0.07
+    with patch("dqagent.service.modeling.evaluate_plan", side_effect=outcomes) as evaluate:
+        candidates = [restarted.evaluate_cleaning_plan(run_id, plan)["candidate"] for plan in plans]
+    assert [item["decision"] for item in candidates] == ["selected", "selected", "selected", "rejected"]
+    assert candidates[-1]["ok"] is False
+    assert "误报率上限" in candidates[-1]["error"]
+    assert all(call.kwargs["validation_false_positive_rate"] == 0.07 for call in evaluate.call_args_list)
+    assert all(call.args[2]["threshold_policy"] == "validation_macro_f1" for call in evaluate.call_args_list)
+    retained = restarted.get_run_status(run_id)
+    assert retained["best_plan"]["name"] == "fewer-false-positives"
+    assert retained["best_decision_threshold"] == 0.6
+    assert retained["remaining_candidates"] == 0
+
+
+@pytest.mark.parametrize("limit", [True, -0.01, 1.01, float("nan"), "0.07"])
+def test_invalid_fpr_limit_does_not_create_a_run(prepared, limit):
+    data, runs = prepared
+    reply = CleaningService(data, runs).start_cleaning_run(validation_false_positive_rate=limit)
+    assert reply["error"]["code"] == "invalid_fpr_limit"
+    assert list(runs.glob("run_*")) == []
 
 
 def test_inspection_and_candidates_never_open_held_out_or_answer_files(prepared):
@@ -229,7 +280,7 @@ def test_failed_finalization_remains_frozen(prepared):
 def test_tuned_threshold_is_persisted_and_frozen_before_test_after_restart(prepared):
     data, runs = prepared
     service = CleaningService(data, runs)
-    run_id = service.start_cleaning_run()["run_id"]
+    run_id = service.start_cleaning_run(validation_false_positive_rate=0.07)["run_id"]
     tuned = {**DEFAULT_PLAN, "add_missing_indicators": True, "threshold_policy": "validation_macro_f1"}
     candidate = service.evaluate_cleaning_plan(run_id, tuned)
     assert candidate["candidate"]["decision"] == "selected"
@@ -243,10 +294,14 @@ def test_tuned_threshold_is_persisted_and_frozen_before_test_after_restart(prepa
             state = json.loads((runs / run_id / "state.json").read_text())
             assert state["status"] == "finalizing"
             assert state["frozen_decision_threshold"] == threshold
+            assert state["selection_objective"] == selection_objective(0.07)
+            assert state["validation_false_positive_rate"] == 0.07
         return load_table(path)
     with patch("dqagent.service.load_table", side_effect=checked_load), patch(
         "dqagent.service.modeling.finalize_plan", wraps=modeling.finalize_plan
-    ) as finalizer:
+    ) as finalizer, patch(
+        "dqagent.service.modeling._select_threshold", side_effect=AssertionError("Reselected a frozen threshold.")
+    ):
         final = restarted.finalize_cleaning_run(run_id)
     assert final["status"] == "finalized"
     assert finalizer.call_args.kwargs["decision_threshold"] == threshold
@@ -264,6 +319,8 @@ def test_legacy_fixed_state_can_finalize_but_missing_tuned_threshold_cannot(prep
         path = runs / run_id / "state.json"
         state = json.loads(path.read_text())
         state.pop("best_decision_threshold")
+        state.pop("validation_false_positive_rate")
+        state.pop("selection_objective")
         if policy == "fixed":
             state["best_plan"].pop("threshold_policy")
             state["best_plan"].pop("add_missing_indicators")
@@ -272,6 +329,7 @@ def test_legacy_fixed_state_can_finalize_but_missing_tuned_threshold_cannot(prep
         if policy == "fixed":
             assert result["status"] == "finalized"
             assert result["frozen_decision_threshold"] == 0.5
+            assert result["selection_objective"] == selection_objective(None)
         else:
             assert result["error"]["code"] == "missing_locked_threshold"
             assert not (runs / run_id / "finalization.claim").exists()
@@ -380,6 +438,9 @@ def test_stdio_protocol_initialize_tools_prompt_and_actual_workflow(prepared):
                 assert "add_missing_indicators" not in typed_plan["required"]
                 assert "threshold_policy" not in typed_plan["required"]
                 assert "classifier" not in typed_plan["required"]
+                start_tool = next(tool for tool in listed.tools if tool.name == "start_cleaning_run")
+                assert "validation_false_positive_rate" in start_tool.input_schema["properties"]
+                assert "validation_false_positive_rate" not in start_tool.input_schema.get("required", [])
                 prompt = await client.get_prompt("cleaning_workflow")
                 assert "finalize_cleaning_run" in prompt.messages[0].content.text
                 async def call(name, arguments=None):
@@ -395,14 +456,16 @@ def test_stdio_protocol_initialize_tools_prompt_and_actual_workflow(prepared):
                 old_candidate = await call("evaluate_cleaning_plan", {"run_id": old_run["run_id"], "plan": old_plan})
                 assert old_candidate["candidate"]["plan"]["threshold_policy"] == "fixed"
                 assert old_candidate["candidate"]["plan"]["add_missing_indicators"] is False
-                started = await call("start_cleaning_run", {"guided": True})
+                started = await call("start_cleaning_run", {"validation_false_positive_rate": 0.07})
                 assert started["guidance"]["recommended_plan"]["numeric_parser"] == "semantic"
+                assert started["selection_objective"] == selection_objective(0.07)
                 run_id = started["run_id"]
                 tuned = {**DEFAULT_PLAN, "classifier": "hist_gradient_boosting", "add_missing_indicators": True}
                 candidate = await call("evaluate_cleaning_plan", {"run_id": run_id, "plan": tuned})
                 assert candidate["candidate"]["decision"] == "selected"
                 assert candidate["candidate"]["plan"]["classifier"] == "hist_gradient_boosting"
                 assert candidate["candidate"]["plan_adjustments"]["threshold_policy"]["effective"] == "validation_macro_f1"
+                assert candidate["candidate"]["threshold_selection"]["validation_false_positive_rate"] <= 0.07
                 threshold = candidate["candidate"]["decision_threshold"]
                 repeat = await call("evaluate_cleaning_plan", {"run_id": run_id, "plan": {**tuned, "name": "retry"}})
                 assert repeat["error"]["code"] == "duplicate_plan"
@@ -410,6 +473,7 @@ def test_stdio_protocol_initialize_tools_prompt_and_actual_workflow(prepared):
                 final = await call("finalize_cleaning_run", {"run_id": run_id})
                 assert final["status"] == "finalized"
                 assert final["frozen_decision_threshold"] == threshold
+                assert final["validation_false_positive_rate"] == 0.07
                 exported = json.loads((runs / run_id / "artifacts" / "preprocessing.json").read_text())
                 assert exported["decision_threshold"] == threshold
                 assert CleaningService(data, runs).get_run_status(run_id)["frozen_decision_threshold"] == threshold

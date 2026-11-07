@@ -85,11 +85,13 @@ class AgentTests(unittest.TestCase):
     def test_legacy_and_extended_plan_arguments_are_compatible(self):
         legacy = _validate_arguments(json.dumps({"plan": plan()}))
         self.assertFalse(legacy["add_missing_indicators"])
+        self.assertFalse(legacy["add_calendar_feature"])
         self.assertEqual(legacy["threshold_policy"], "fixed")
         self.assertEqual(legacy["classifier"], "logistic_regression")
         self.assertNotIn("add_missing_indicators", PLAN_SCHEMA["required"])
         self.assertNotIn("threshold_policy", PLAN_SCHEMA["required"])
         self.assertNotIn("classifier", PLAN_SCHEMA["required"])
+        self.assertNotIn("add_calendar_feature", PLAN_SCHEMA["required"])
         extended = _validate_arguments(json.dumps({"plan": {**plan(), "add_missing_indicators": True,
                                                            "threshold_policy": "validation_macro_f1"}}))
         self.assertTrue(extended["add_missing_indicators"])
@@ -116,6 +118,29 @@ class AgentTests(unittest.TestCase):
             self.assertEqual(first["plan"]["outlier_policy"], "invalid_to_missing")
             self.assertEqual(second["plan"]["classifier"], "hist_gradient_boosting")
             self.assertEqual(summary["best_decision_threshold"], 0.42)
+
+    def test_capped_search_prefers_recall_and_rejects_ineligible_validation_results(self):
+        trials = [plan("a"), {**plan("b"), "class_weight": "balanced"},
+                  {**plan("c"), "add_calendar_feature": True}, {**plan("d"), "numeric_imputation": "mean"}]
+        provider = ScriptedProvider([{"role": "assistant", "tool_calls": [
+            tool_call(candidate["name"], candidate) for candidate in trials]}])
+        values = iter([(0.9, 3, 0), (0.7, 4, 7), (0.7, 4, 4), (0.9, 9, 8)])
+
+        def capped(train, val, candidate, seed=42, *, validation_false_positive_rate=None):
+            self.assertEqual(validation_false_positive_rate, 0.07)
+            self.assertEqual(candidate["threshold_policy"], "validation_macro_f1")
+            result = evaluation(train, val, candidate, seed)
+            macro, tp, fp = next(values)
+            result["validation"] = {"macro_f1": macro, "confusion_matrix": [[100 - fp, fp], [10 - tp, tp]]}
+            return result
+
+        with tempfile.TemporaryDirectory() as directory, fake_tools(capped) as evaluate:
+            summary = run_agent(object(), object(), directory, provider=provider, validation_false_positive_rate=0.07)
+            self.assertEqual(evaluate.call_count, 4)
+            self.assertEqual(summary["selection_objective"]["metric"], "minority_recall")
+            self.assertEqual(summary["selected_plan"]["name"], "c")
+            self.assertEqual([c["decision"] for c in summary["candidates"]],
+                             ["selected", "selected", "selected", "rejected"])
 
     def test_tuned_plan_without_validation_threshold_is_rejected(self):
         tuned = {**plan(), "threshold_policy": "validation_macro_f1"}
